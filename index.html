@@ -200,11 +200,12 @@ let CICEK_GROUPS = {};
 let GROUP_NAMES = [];
 
 async function loadAllData() {
-  const allRecords = [];
+  const sheetData = {}; // name -> records[]
   const sheetNames = Object.keys(SHEETS);
-  const seen = new Set(); // For deduplication
 
+  // Load all sheets
   for (const name of sheetNames) {
+    sheetData[name] = [];
     try {
       const resp = await fetch(SHEETS[name]);
       if (!resp.ok) continue;
@@ -212,21 +213,43 @@ async function loadAllData() {
       const rows = parseCSV(text);
       rows.forEach(raw => {
         const rec = normalizeRecord(raw);
-        if (rec) {
-          // Create unique key: tarih + şube + çiçek + demet + birimFiyat
-          const key = rec.t + "|" + rec.s + "|" + rec.c + "|" + rec.d + "|" + rec.f.toFixed(2);
-          if (!seen.has(key)) {
-            seen.add(key);
-            allRecords.push(rec);
-          }
-        }
+        if (rec) sheetData[name].push(rec);
       });
     } catch (e) {
       console.warn("Sheet yüklenemedi:", name, e);
     }
   }
 
+  // Find dates that exist in GUNCEL
+  const guncelDates = new Set();
+  if (sheetData["GUNCEL"]) {
+    sheetData["GUNCEL"].forEach(r => guncelDates.add(r.t));
+  }
+
+  // Merge: use GUNCEL records for those dates, skip them from 2026
+  const allRecords = [];
+
+  // First add GUNCEL records
+  if (sheetData["GUNCEL"]) {
+    sheetData["GUNCEL"].forEach(r => allRecords.push(r));
+  }
+
+  // Then add 2026 records but SKIP dates already in GUNCEL
+  if (sheetData["2026"]) {
+    sheetData["2026"].forEach(r => {
+      if (!guncelDates.has(r.t)) {
+        allRecords.push(r);
+      }
+    });
+  }
+
+  // Add 2025 records (no overlap)
+  if (sheetData["2025"]) {
+    sheetData["2025"].forEach(r => allRecords.push(r));
+  }
+
   ALL_DATA = allRecords;
+  console.log("Toplam kayıt:", ALL_DATA.length, "GUNCEL:", sheetData["GUNCEL"]?.length || 0, "2026:", sheetData["2026"]?.length || 0, "2025:", sheetData["2025"]?.length || 0, "GUNCEL tarihleri:", [...guncelDates]);
   FLOWERS = [...new Set(ALL_DATA.map(r => r.c))].sort();
   BRANCHES = [...new Set(ALL_DATA.map(r => r.s))].sort();
 
@@ -285,7 +308,7 @@ function calcStats(filtered) {
   const tc = filtered.reduce((s, r) => s + r.ciro, 0);
   const tn = filtered.reduce((s, r) => s + r.net, 0);
   const td = filtered.reduce((s, r) => s + r.d, 0);
-  const av = td > 0 ? tc / td : 0;
+  const av = td > 0 ? tn / td : 0; // Ort fiyat = net bazlı (gider düşülmüş)
 
   const groupBy = key => {
     const m = {};
