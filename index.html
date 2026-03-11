@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0b0e18">
+<title>Çallı Çiçek - Üretici Paneli</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'DM Sans',system-ui,sans-serif;background:#0b0e18;color:#e2e0db;min-height:100vh;max-width:460px;margin:0 auto;-webkit-font-smoothing:antialiased}
+input,button,select{font-family:inherit}
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:2px}
+.bg-grad{position:fixed;inset:0;background:radial-gradient(ellipse at 15% 0%,rgba(34,197,94,0.04) 0%,transparent 50%);pointer-events:none}
+.header{padding:14px 20px 10px;border-bottom:1px solid rgba(255,255,255,0.05)}
+.header-row{display:flex;justify-content:space-between;align-items:center}
+.logo{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#22c55e,#15803d);display:flex;align-items:center;justify-content:center;font-size:15px}
+.lbl{font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}
+.val-big{font-size:20px;font-weight:800}
+.card{background:rgba(255,255,255,0.03);border-radius:14px;padding:16px 14px;border:1px solid rgba(255,255,255,0.06)}
+.card-green{background:linear-gradient(135deg,rgba(34,197,94,0.1),rgba(34,197,94,0.03));border-color:rgba(34,197,94,0.12)}
+.sec-title{font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;margin:20px 0 10px}
+.filters{padding:10px 20px;border-bottom:1px solid rgba(255,255,255,0.05)}
+.presets{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:0}
+.preset-btn{padding:5px 10px;border-radius:7px;border:none;cursor:pointer;font-size:11px;font-weight:500;background:rgba(255,255,255,0.05);color:#94a3b8}
+.preset-btn.active{background:rgba(34,197,94,0.18);color:#4ade80}
+.filter-toggle{padding:5px 11px;border-radius:8px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.04);color:#94a3b8;font-size:12px;cursor:pointer;font-weight:500}
+.filter-toggle.open{background:rgba(34,197,94,0.12);color:#4ade80}
+.tabs{display:flex;gap:2px;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,0.05);overflow-x:auto}
+.tab-btn{padding:7px 10px;border-radius:9px;border:none;cursor:pointer;font-size:11px;font-weight:400;white-space:nowrap;background:transparent;color:#64748b}
+.tab-btn.active{background:rgba(34,197,94,0.14);color:#4ade80;font-weight:600}
+.content{padding:14px 20px 100px}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.rank-item{display:flex;justify-content:space-between;align-items:center;cursor:pointer}
+.rank-num{width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700}
+.bar-bg{height:3px;background:rgba(255,255,255,0.04);border-radius:2px;margin-top:8px}
+.bar-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,#22c55e,#34d399)}
+.show-more{width:100%;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:#64748b;font-size:11px;cursor:pointer;margin-top:4px}
+.alert-scroll{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px}
+.alert-chip{flex-shrink:0;padding:7px 12px;border-radius:10px;font-size:11px;line-height:1.4;max-width:260px}
+.dropdown{position:relative;flex:1}
+.dropdown-btn{width:100%;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);color:#64748b;font-size:12px;font-weight:500;text-align:left;cursor:pointer;display:flex;justify-content:space-between}
+.dropdown-btn.has-val{color:#e5e7eb}
+.dropdown-list{position:absolute;top:100%;left:0;right:0;z-index:50;margin-top:4px;border-radius:10px;background:#1e2030;border:1px solid rgba(255,255,255,0.1);box-shadow:0 12px 40px rgba(0,0,0,0.6);max-height:320px;overflow-y:auto}
+.dropdown-item{padding:10px 14px;font-size:12px;cursor:pointer;color:#d1d5db;border-top:1px solid rgba(255,255,255,0.04)}
+.dropdown-item:first-child{border-top:none}
+.dropdown-item.active{color:#4ade80;background:rgba(34,197,94,0.1)}
+.dropdown-item.group-header{font-weight:600;color:#e5e7eb;background:rgba(255,255,255,0.02);border-top:1px solid rgba(255,255,255,0.06)}
+.dropdown-item.group-header.active{color:#fbbf24;background:rgba(250,204,21,0.1)}
+.dropdown-item.sub-item{padding-left:28px;color:#94a3b8}
+.dropdown-item.sub-item.active{color:#4ade80;background:rgba(34,197,94,0.08)}
+.filter-tag{padding:4px 10px;border-radius:6px;font-size:11px;display:inline-flex;align-items:center;gap:4px}
+.filter-tag .x{cursor:pointer}
+.date-input{width:100%;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);color:#e5e7eb;font-size:13px;color-scheme:dark}
+.comp-bar{display:flex;align-items:center;gap:8px;padding:6px 0}
+.comp-bar-fill{height:6px;background:rgba(255,255,255,0.04);border-radius:3px;flex:1}
+.comp-bar-inner{height:100%;border-radius:3px}
+.heat-row{display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.03)}
+.tbl-head{display:grid;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,0.08);font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px}
+.tbl-row{display:grid;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,0.03);font-size:11px}
+.tbl-cols{grid-template-columns:46px 1fr 58px 32px 48px 48px}
+.ai-chip{padding:5px 10px;border-radius:8px;border:1px solid rgba(168,85,247,0.2);background:rgba(168,85,247,0.06);color:#c4b5fd;font-size:10px;cursor:pointer}
+.ai-msg{margin-bottom:8px;padding:10px 12px;border-radius:11px}
+.ai-msg-user{background:rgba(168,85,247,0.08);border:1px solid rgba(168,85,247,0.12)}
+.ai-msg-ai{background:rgba(34,197,94,0.05);border:1px solid rgba(34,197,94,0.08)}
+.ai-input{flex:1;padding:11px 14px;border-radius:11px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.06);color:#e5e7eb;font-size:12px;outline:none}
+.ai-send{padding:11px 16px;border-radius:11px;border:none;cursor:pointer;font-weight:600;font-size:12px}
+.loading-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;color:#64748b}
+.spinner{width:40px;height:40px;border:3px solid rgba(255,255,255,0.1);border-top-color:#4ade80;border-radius:50%;animation:spin 0.8s linear infinite;margin-bottom:16px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.grp-grid{display:grid;gap:8px;margin-bottom:6px}
+.grp-card{padding:12px 10px;text-align:center;cursor:pointer}
+.trend-up{color:#34d399;font-weight:600;font-size:12px}
+.trend-down{color:#f87171;font-weight:600;font-size:12px}
+</style>
+</head>
+<body>
+<div class="bg-grad"></div>
+<div id="app" style="position:relative;z-index:1">
+  <div class="loading-screen">
+    <div class="spinner"></div>
+    <div style="font-size:14px;margin-bottom:6px">Veriler yükleniyor...</div>
+    <div style="font-size:11px;color:#475569">Google Sheets'ten çekiliyor</div>
+  </div>
+</div>
+
+<script>
+// ═══════════════ CONFIG ═══════════════
+const SHEETS = {
+  GUNCEL: "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=1698698520&single=true&output=csv",
+  "2026": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=0&single=true&output=csv",
+  "2025": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=1807975712&single=true&output=csv"
+};
+const GIDER = 0.20;
+
+// ═══════════════ HELPERS ═══════════════
+const fmt = n => n != null ? new Intl.NumberFormat("tr-TR",{maximumFractionDigits:0}).format(n)+" ₺" : "—";
+const fmt2 = n => n != null ? new Intl.NumberFormat("tr-TR",{minimumFractionDigits:2,maximumFractionDigits:2}).format(n)+" ₺" : "—";
+const fD = s => { try { return new Date(s+"T00:00:00").toLocaleDateString("tr-TR",{day:"numeric",month:"short"}) } catch(e) { return s }};
+const fDF = s => { try { return new Date(s+"T00:00:00").toLocaleDateString("tr-TR",{day:"numeric",month:"long",year:"numeric"}) } catch(e) { return s }};
+const trendHTML = v => { if(v==null)return ""; const n=parseFloat(v); return `<span class="${n>0?'trend-up':'trend-down'}">${n>0?'▲ +':'▼ '}${Math.abs(n).toFixed(1)}%</span>` };
+const esc = s => s ? s.replace(/</g,"&lt;").replace(/>/g,"&gt;") : "";
+
+// ═══════════════ CSV PARSER ═══════════════
+function parseCSV(text) {
+  const lines = text.split("\n").map(l => l.trim()).filter(l => l);
+  if (lines.length < 2) return [];
+  const headers = parseCSVLine(lines[0]);
+  const records = [];
+  for (let i = 1; i < lines.length; i++) {
+    const vals = parseCSVLine(lines[i]);
+    if (vals.length < headers.length) continue;
+    const obj = {};
+    headers.forEach((h, idx) => obj[h.trim()] = (vals[idx] || "").trim());
+    records.push(obj);
+  }
+  return records;
+}
+
+function parseCSVLine(line) {
+  const result = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"' && line[i+1] === '"') { current += '"'; i++; }
+      else if (ch === '"') inQuotes = false;
+      else current += ch;
+    } else {
+      if (ch === '"') inQuotes = true;
+      else if (ch === ',') { result.push(current); current = ""; }
+      else current += ch;
+    }
+  }
+  result.push(current);
+  return result;
+}
+
+function normalizeRecord(raw) {
+  // Find columns flexibly
+  const keys = Object.keys(raw);
+  const find = (...terms) => keys.find(k => terms.some(t => k.toLowerCase().includes(t.toLowerCase())));
+
+  const subeKey = find("Şube", "Sube", "şube", "sube");
+  const cicekKey = find("Çiçek", "Cicek", "çiçek", "cicek");
+  const adetKey = find("Adet", "adet");
+  const demetKey = find("Demet", "demet");
+  const birimKey = find("Birim", "birim");
+  const tarihKey = find("Tarih", "tarih");
+
+  const sube = raw[subeKey] || "";
+  const cicek = raw[cicekKey] || "";
+  const adet = parseInt((raw[adetKey] || "0").replace(/[^\d]/g, "")) || 0;
+  const demet = parseInt((raw[demetKey] || "0").replace(/[^\d]/g, "")) || 0;
+
+  let birimStr = (raw[birimKey] || "0").replace(/[^\d.,]/g, "").replace(",", ".");
+  const birimFiyat = parseFloat(birimStr) || 0;
+
+  // Parse date - handle both DD.MM.YYYY and YYYY-MM-DD
+  let tarih = "";
+  const rawDate = raw[tarihKey] || "";
+  if (rawDate.includes(".")) {
+    const parts = rawDate.split(".");
+    if (parts.length >= 3) {
+      const d = parts[0].padStart(2, "0");
+      const m = parts[1].padStart(2, "0");
+      const y = parts[2].length === 2 ? "20" + parts[2] : parts[2];
+      tarih = y + "-" + m + "-" + d;
+    }
+  } else if (rawDate.includes("-")) {
+    tarih = rawDate.substring(0, 10);
+  } else if (rawDate.includes("/")) {
+    const parts = rawDate.split("/");
+    if (parts.length >= 3) {
+      tarih = parts[2] + "-" + parts[0].padStart(2,"0") + "-" + parts[1].padStart(2,"0");
+    }
+  }
+
+  if (!sube || !cicek || !tarih || birimFiyat <= 0 || demet <= 0) return null;
+
+  return {
+    s: sube, c: cicek.toUpperCase(), a: adet, d: demet,
+    f: birimFiyat, t: tarih,
+    ciro: birimFiyat * demet,
+    net: birimFiyat * demet * (1 - GIDER),
+    dbn: birimFiyat * (1 - GIDER)
+  };
+}
+
+// ═══════════════ DATA LOADING ═══════════════
+let ALL_DATA = [];
+let FLOWERS = [];
+let BRANCHES = [];
+let CICEK_GROUPS = {};
+let GROUP_NAMES = [];
+
+async function loadAllData() {
+  const allRecords = [];
+  const sheetNames = Object.keys(SHEETS);
+
+  for (const name of sheetNames) {
+    try {
+      const resp = await fetch(SHEETS[name]);
+      if (!resp.ok) continue;
+      const text = await resp.text();
+      const rows = parseCSV(text);
+      rows.forEach(raw => {
+        const rec = normalizeRecord(raw);
+        if (rec) allRecords.push(rec);
+      });
+    } catch (e) {
+      console.warn("Sheet yüklenemedi:", name, e);
+    }
+  }
+
+  ALL_DATA = allRecords;
+  FLOWERS = [...new Set(ALL_DATA.map(r => r.c))].sort();
+  BRANCHES = [...new Set(ALL_DATA.map(r => r.s))].sort();
+
+  // Auto-group flowers by first word
+  CICEK_GROUPS = {};
+  FLOWERS.forEach(f => {
+    const parts = f.split(" ");
+    const group = parts.length > 1 ? parts[0] : f;
+    if (!CICEK_GROUPS[group]) CICEK_GROUPS[group] = [];
+    CICEK_GROUPS[group].push(f);
+  });
+  // Only keep groups with 2+ flowers
+  Object.keys(CICEK_GROUPS).forEach(k => {
+    if (CICEK_GROUPS[k].length < 2) delete CICEK_GROUPS[k];
+  });
+  GROUP_NAMES = Object.keys(CICEK_GROUPS).sort();
+
+  return ALL_DATA.length;
+}
+
+// ═══════════════ STATE ═══════════════
+let state = {
+  tab: "panel",
+  sd: new Date().toISOString().split("T")[0],
+  ed: new Date().toISOString().split("T")[0],
+  sf: null, sb: null,
+  fo: false,
+  hmSort: "net",
+  expanded: {},
+  aiQ: "", aiH: [], aiL: false,
+  ddOpen: null
+};
+
+function setState(updates) {
+  Object.assign(state, updates);
+  render();
+}
+
+// ═══════════════ FILTERING & STATS ═══════════════
+function getFiltered() {
+  return ALL_DATA.filter(r => {
+    if (r.t < state.sd || r.t > state.ed) return false;
+    if (state.sf) {
+      if (state.sf.startsWith("GRUP:")) {
+        if (!r.c.startsWith(state.sf.replace("GRUP:", ""))) return false;
+      } else {
+        if (r.c !== state.sf) return false;
+      }
+    }
+    if (state.sb && r.s !== state.sb) return false;
+    return true;
+  });
+}
+
+function calcStats(filtered) {
+  const tc = filtered.reduce((s, r) => s + r.ciro, 0);
+  const tn = filtered.reduce((s, r) => s + r.net, 0);
+  const td = filtered.reduce((s, r) => s + r.d, 0);
+  const av = td > 0 ? tc / td : 0;
+
+  const groupBy = key => {
+    const m = {};
+    filtered.forEach(r => {
+      const k = r[key];
+      if (!m[k]) m[k] = { ciro: 0, net: 0, d: 0, prices: [] };
+      m[k].ciro += r.ciro; m[k].net += r.net; m[k].d += r.d; m[k].prices.push(r.f);
+    });
+    return Object.entries(m).map(([name, v]) => ({
+      name, ...v, avgP: v.d > 0 ? v.ciro / v.d : 0, dbn: v.d > 0 ? v.net / v.d : 0
+    })).sort((a, b) => b.dbn - a.dbn);
+  };
+
+  const byF = groupBy("c");
+  const byB = groupBy("s").sort((a,b) => b.net - a.net);
+
+  const grpMap = {};
+  filtered.forEach(r => {
+    const g = GROUP_NAMES.find(x => r.c.startsWith(x)) || r.c;
+    if (!grpMap[g]) grpMap[g] = { ciro: 0, net: 0, d: 0 };
+    grpMap[g].ciro += r.ciro; grpMap[g].net += r.net; grpMap[g].d += r.d;
+  });
+  const grpList = Object.entries(grpMap).map(([n, v]) => ({ name: n, ...v, dbn: v.d > 0 ? v.net / v.d : 0 })).sort((a, b) => b.net - a.net);
+
+  const dayMap = {};
+  filtered.forEach(r => {
+    if (!dayMap[r.t]) dayMap[r.t] = { ciro: 0, net: 0, d: 0 };
+    dayMap[r.t].ciro += r.ciro; dayMap[r.t].net += r.net; dayMap[r.t].d += r.d;
+  });
+  const dl = Object.entries(dayMap).map(([d, v]) => ({ date: d, ...v, avgP: v.d > 0 ? v.ciro / v.d : 0 })).sort((a, b) => a.date.localeCompare(b.date));
+
+  // Period comparison
+  const dc = Math.max(1, Math.round((new Date(state.ed) - new Date(state.sd)) / 864e5) + 1);
+  const pe = new Date(new Date(state.sd).getTime() - 864e5);
+  const ps = new Date(pe.getTime() - (dc - 1) * 864e5);
+  const prev = ALL_DATA.filter(r =>
+    r.t >= ps.toISOString().split("T")[0] && r.t <= pe.toISOString().split("T")[0] &&
+    (!state.sf || (state.sf.startsWith("GRUP:") ? r.c.startsWith(state.sf.replace("GRUP:", "")) : r.c === state.sf)) &&
+    (!state.sb || r.s === state.sb)
+  );
+  const pc = prev.reduce((s, r) => s + r.ciro, 0);
+  const cc = pc > 0 ? ((tc - pc) / pc * 100) : null;
+
+  return { tc, tn, td, av, byF, byB, grpList, dl, cc, cnt: filtered.length };
+}
+
+function getAlerts(filtered) {
+  const today = state.ed;
+  const result = [];
+  const todayRecs = ALL_DATA.filter(r => r.t === today);
+  if (todayRecs.length) {
+    const best = [...todayRecs].sort((a, b) => b.f - a.f)[0];
+    result.push({ type: "star", text: "Bugün en iyi: " + esc(best.c) + " → " + esc(best.s) + " (" + fmt(best.f) + ")" });
+  }
+  return result.slice(0, 4);
+}
+
+function getBranchComp(filtered) {
+  const m = {};
+  filtered.forEach(r => {
+    if (!m[r.c]) m[r.c] = {};
+    if (!m[r.c][r.s]) m[r.c][r.s] = { ciro: 0, net: 0, d: 0 };
+    m[r.c][r.s].ciro += r.ciro; m[r.c][r.s].net += r.net; m[r.c][r.s].d += r.d;
+  });
+  return Object.entries(m).map(([flower, branches]) => ({
+    flower,
+    branches: Object.entries(branches).map(([n, v]) => ({ name: n, ...v, avgP: v.d > 0 ? v.ciro / v.d : 0 })).sort((a, b) => b.avgP - a.avgP)
+  })).sort((a, b) => Math.max(...b.branches.map(x => x.avgP)) - Math.max(...a.branches.map(x => x.avgP)));
+}
+
+function getHeatData(filtered) {
+  const m = {};
+  filtered.forEach(r => {
+    const k = r.c + "|" + r.s;
+    if (!m[k]) m[k] = { net: 0, d: 0, ciro: 0 };
+    m[k].net += r.net; m[k].d += r.d; m[k].ciro += r.ciro;
+  });
+  const list = Object.entries(m).map(([k, v]) => {
+    const p = k.split("|");
+    return { cicek: p[0], sube: p[1], ...v, dbn: v.d > 0 ? v.net / v.d : 0, avgP: v.d > 0 ? v.ciro / v.d : 0 };
+  });
+  list.sort((a, b) => state.hmSort === "net" ? b.dbn - a.dbn : b.avgP - a.avgP);
+  return list;
+}
+
+function getYoY(filtered) {
+  const lyS = new Date(state.sd); lyS.setFullYear(lyS.getFullYear() - 1);
+  const lyE = new Date(state.ed); lyE.setFullYear(lyE.getFullYear() - 1);
+  const ls = lyS.toISOString().split("T")[0];
+  const le = lyE.toISOString().split("T")[0];
+  const lastD = ALL_DATA.filter(r => r.t >= ls && r.t <= le &&
+    (!state.sf || (state.sf.startsWith("GRUP:") ? r.c.startsWith(state.sf.replace("GRUP:", "")) : r.c === state.sf)) &&
+    (!state.sb || r.s === state.sb));
+  const tC = filtered.reduce((s, r) => s + r.ciro, 0);
+  const tD = filtered.reduce((s, r) => s + r.d, 0);
+  const tA = tD > 0 ? tC / tD : 0;
+  const lC = lastD.reduce((s, r) => s + r.ciro, 0);
+  const lDm = lastD.reduce((s, r) => s + r.d, 0);
+  const lA = lDm > 0 ? lC / lDm : 0;
+  return { tC, tD, tA, lC, lD: lDm, lA, cCh: lC > 0 ? ((tC - lC) / lC * 100) : null, pCh: lA > 0 ? ((tA - lA) / lA * 100) : null, has: lastD.length > 0 };
+}
+
+// ═══════════════ RENDER ═══════════════
+function render() {
+  const filtered = getFiltered();
+  const stats = calcStats(filtered);
+  const dateLabel = state.sd !== state.ed ? fD(state.sd) + " – " + fD(state.ed) : fDF(state.sd);
+  const today = new Date().toISOString().split("T")[0];
+  const alerts = getAlerts(filtered);
+
+  let html = "";
+
+  // Header
+  html += `<div class="header"><div class="header-row"><div><div style="font-size:10px;letter-spacing:2px;color:#475569;text-transform:uppercase">Çallı Çiçek</div><div style="font-size:19px;font-weight:700;color:#f8fafc">Üretici Paneli</div></div><div class="logo">🌸</div></div></div>`;
+
+  // Alerts
+  if (alerts.length > 0 && state.tab === "panel") {
+    html += `<div style="padding:8px 20px;border-bottom:1px solid rgba(255,255,255,0.05)"><div class="alert-scroll">`;
+    alerts.forEach(a => {
+      const bg = a.type === "up" ? "rgba(34,197,94,0.1)" : a.type === "down" ? "rgba(239,68,68,0.1)" : "rgba(250,204,21,0.1)";
+      const br = a.type === "up" ? "rgba(34,197,94,0.2)" : a.type === "down" ? "rgba(239,68,68,0.2)" : "rgba(250,204,21,0.2)";
+      const cl = a.type === "up" ? "#6ee7b7" : a.type === "down" ? "#fca5a5" : "#fde68a";
+      html += `<div class="alert-chip" style="background:${bg};border:1px solid ${br};color:${cl}">${a.type==="star"?"★ ":"▲ "}${a.text}</div>`;
+    });
+    html += `</div></div>`;
+  }
+
+  // Filters
+  html += `<div class="filters">`;
+  html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">`;
+  html += `<div style="font-size:14px;font-weight:600;color:#e2e8f0">${dateLabel}</div>`;
+  html += `<button class="filter-toggle ${state.fo?'open':''}" onclick="setState({fo:!state.fo,ddOpen:null})">${state.fo?'Kapat ✕':'Filtre ⚙'}</button>`;
+  html += `</div>`;
+  html += `<div class="presets" style="margin-bottom:${state.fo?'12px':'0'}">`;
+  const presets = [["today","Bugün",state.sd===today&&state.ed===today],["week","7 Gün",false],["month","Bu Ay",false],["all","Tümü",false]];
+  presets.forEach(([id,l,_]) => {
+    html += `<button class="preset-btn ${_?'active':''}" onclick="setPreset('${id}')">${l}</button>`;
+  });
+  html += `<span style="flex:1"></span><span style="font-size:11px;color:#475569;align-self:center">${stats.cnt} kayıt</span></div>`;
+
+  if (state.fo) {
+    html += `<div style="display:flex;flex-direction:column;gap:10px">`;
+    html += `<div style="display:flex;gap:10px"><div style="flex:1"><div class="lbl">Başlangıç</div><input type="date" class="date-input" value="${state.sd}" onchange="setState({sd:this.value})"></div><div style="flex:1"><div class="lbl">Bitiş</div><input type="date" class="date-input" value="${state.ed}" onchange="setState({ed:this.value})"></div></div>`;
+    // Dropdowns
+    html += `<div style="display:flex;gap:10px">`;
+    html += renderDropdown("Çiçek", state.sf, "sf", true);
+    html += renderDropdown("Şube", state.sb, "sb", false);
+    html += `</div>`;
+    if (state.sf || state.sb) {
+      html += `<div style="display:flex;gap:6px;flex-wrap:wrap">`;
+      if (state.sf) html += `<span class="filter-tag" style="background:rgba(34,197,94,0.12);color:#4ade80">${esc(state.sf.replace("GRUP:",""))}${state.sf.startsWith("GRUP:")?" (Grup)":""} <span class="x" onclick="setState({sf:null})">✕</span></span>`;
+      if (state.sb) html += `<span class="filter-tag" style="background:rgba(96,165,250,0.12);color:#93c5fd">${esc(state.sb)} <span class="x" onclick="setState({sb:null})">✕</span></span>`;
+      html += `</div>`;
+    }
+    html += `</div>`;
+  }
+  html += `</div>`;
+
+  // Tabs
+  const tabList = [{id:"panel",l:"Panel",i:"◉"},{id:"compare",l:"Karşılaştır",i:"⚡"},{id:"heat",l:"Kâr Haritası",i:"🔥"},{id:"tablo",l:"Tablo",i:"☰"},{id:"yoy",l:"Geçen Yıl",i:"📊"},{id:"ai",l:"AI",i:"✦"}];
+  html += `<div class="tabs">`;
+  tabList.forEach(t => {
+    html += `<button class="tab-btn ${state.tab===t.id?'active':''}" onclick="setState({tab:'${t.id}',ddOpen:null})">${t.i} ${t.l}</button>`;
+  });
+  html += `</div>`;
+
+  html += `<div class="content">`;
+
+  // ══ PANEL ══
+  if (state.tab === "panel") {
+    html += `<div class="grid-2" style="margin-bottom:6px">`;
+    html += `<div class="card card-green"><div class="lbl">Ciro</div><div class="val-big" style="color:#4ade80">${fmt(stats.tc)}</div>${stats.cc!=null?'<div style="margin-top:4px">'+trendHTML(stats.cc)+'</div>':''}</div>`;
+    html += `<div class="card"><div class="lbl">Net Gelir</div><div class="val-big" style="color:#f8fafc">${fmt(stats.tn)}</div></div>`;
+    html += `<div class="card"><div class="lbl">Demet</div><div class="val-big" style="color:#f8fafc">${stats.td}</div></div>`;
+    html += `<div class="card"><div class="lbl">Ort. Fiyat</div><div class="val-big" style="color:#f8fafc">${fmt2(stats.av)}</div></div>`;
+    html += `</div>`;
+
+    if (stats.dl.length > 1) {
+      const mx = Math.max(...stats.dl.map(x => x.ciro));
+      html += `<div class="card" style="margin-top:16px;margin-bottom:6px"><div style="font-size:11px;font-weight:600;color:#94a3b8;margin-bottom:10px">Günlük Ciro</div><div style="display:flex;align-items:flex-end;gap:3px;height:65px">`;
+      stats.dl.forEach(d => {
+        const h = mx > 0 ? (d.ciro / mx) * 65 : 3;
+        html += `<div style="flex:1;text-align:center"><div style="height:${Math.max(3,h)}px;border-radius:3px 3px 1px 1px;background:linear-gradient(to top,rgba(34,197,94,0.2),rgba(34,197,94,0.4));margin-bottom:3px"></div><div style="font-size:7px;color:#475569">${fD(d.date)}</div></div>`;
+      });
+      html += `</div></div>`;
+    }
+
+    if (stats.grpList.length > 1) {
+      html += `<div class="sec-title">Çiçek Grubu</div>`;
+      html += `<div class="grp-grid" style="grid-template-columns:repeat(${Math.min(stats.grpList.length,4)},1fr)">`;
+      stats.grpList.forEach(g => {
+        html += `<div class="card grp-card" onclick="setState({sf:'GRUP:${esc(g.name)}',fo:true})"><div style="font-size:11px;font-weight:600;color:#f8fafc;margin-bottom:4px">${esc(g.name)}</div><div style="font-size:14px;font-weight:800;color:#34d399">${fmt(g.net)}</div><div style="font-size:10px;color:#64748b;margin-top:2px">${g.d} dm</div></div>`;
+      });
+      html += `</div>`;
+    }
+
+    html += `<div class="sec-title">Demet Başı Net Sıralaması</div>`;
+    const flowerShow = state.expanded.flowers ? 999 : 6;
+    stats.byF.slice(0, flowerShow).forEach((f, i) => {
+      const colors = ["#fbbf24","#cbd5e1","#c49a6c"];
+      const bgs = ["rgba(250,204,21,0.15)","rgba(192,192,192,0.12)","rgba(205,127,50,0.12)"];
+      html += `<div class="card rank-item" style="margin-bottom:6px;padding:12px 14px"><div style="display:flex;align-items:center;gap:8px"><div class="rank-num" style="background:${i<3?bgs[i]:'rgba(255,255,255,0.04)'};color:${i<3?colors[i]:'#64748b'}">${i+1}</div><div><div style="font-size:12px;font-weight:600;color:#f8fafc">${esc(f.name)}</div><div style="font-size:10px;color:#64748b">${f.d}dm · ${fmt(f.avgP)}</div></div></div><div style="text-align:right"><div style="font-size:14px;font-weight:700;color:#34d399">${fmt(f.dbn)}</div><div style="font-size:9px;color:#64748b">dm başı net</div></div></div>`;
+    });
+    if (stats.byF.length > 6) html += `<button class="show-more" onclick="toggleExp('flowers')">${state.expanded.flowers?'Daha az ▲':'Tümü ('+stats.byF.length+') ▼'}</button>`;
+
+    html += `<div class="sec-title">Şube Sıralaması</div>`;
+    const brShow = state.expanded.branches ? 999 : 5;
+    stats.byB.slice(0, brShow).forEach((b, i) => {
+      const w = stats.byB[0]?.net > 0 ? (b.net / stats.byB[0].net) * 100 : 0;
+      html += `<div class="card" style="margin-bottom:6px;padding:12px 14px"><div style="display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:13px;font-weight:600;color:#f8fafc">${esc(b.name)}</div><div style="font-size:10px;color:#64748b">${b.d}dm · ${fmt2(b.avgP)}</div></div><div style="text-align:right"><div style="font-size:13px;font-weight:700;color:#34d399">${fmt(b.net)}</div></div></div><div class="bar-bg"><div class="bar-fill" style="width:${w}%"></div></div></div>`;
+    });
+    if (stats.byB.length > 5) html += `<button class="show-more" onclick="toggleExp('branches')">${state.expanded.branches?'Daha az ▲':'Tüm şubeler ('+stats.byB.length+') ▼'}</button>`;
+  }
+
+  // ══ KARŞILAŞTIR ══
+  if (state.tab === "compare") {
+    const bc = getBranchComp(filtered);
+    html += `<div class="sec-title">Aynı Çiçek — Farklı Şubeler</div>`;
+    html += `<div style="font-size:12px;color:#94a3b8;margin-bottom:14px;margin-top:-6px">En iyi fiyat veren şubeyi bul</div>`;
+    const compShow = state.expanded.comp ? 999 : 5;
+    bc.slice(0, compShow).forEach((item, i) => {
+      const mx = item.branches[0]?.avgP || 1;
+      const show = state.expanded["comp_"+i] ? 999 : 5;
+      html += `<div class="card" style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="font-size:13px;font-weight:700;color:#f8fafc">${esc(item.flower)}</div><div style="font-size:10px;color:#34d399">${item.branches.length} şube</div></div>`;
+      item.branches.slice(0, show).forEach((b, j) => {
+        const w = (b.avgP / mx) * 100;
+        html += `<div class="comp-bar" style="border-top:${j>0?'1px solid rgba(255,255,255,0.03)':'none'}"><div style="width:60px;font-size:11px;color:${j===0?'#34d399':'#94a3b8'};font-weight:${j===0?600:400}">${esc(b.name)}</div><div class="comp-bar-fill"><div class="comp-bar-inner" style="width:${w}%;background:${j===0?'linear-gradient(90deg,#22c55e,#34d399)':'rgba(148,163,184,0.25)'}"></div></div><div style="width:55px;text-align:right;font-size:12px;font-weight:700;color:${j===0?'#34d399':'#cbd5e1'}">${fmt(b.avgP)}</div><div style="width:30px;text-align:right;font-size:9px;color:#64748b">${b.d}dm</div></div>`;
+      });
+      if (item.branches.length > 5) html += `<button style="margin-top:6px;background:none;border:none;color:#64748b;font-size:10px;cursor:pointer" onclick="toggleExp('comp_${i}')">${state.expanded["comp_"+i]?"Daha az":"+"+(item.branches.length-5)+" şube daha"}</button>`;
+      html += `</div>`;
+    });
+    if (bc.length > 5) html += `<button class="show-more" onclick="toggleExp('comp')">${state.expanded.comp?'Daha az ▲':'Tüm çiçekler ('+bc.length+') ▼'}</button>`;
+  }
+
+  // ══ KAR HARİTASI ══
+  if (state.tab === "heat") {
+    const hd = getHeatData(filtered);
+    html += `<div class="sec-title">En Kârlı Kombinasyonlar</div>`;
+    html += `<div style="display:flex;gap:6px;margin-bottom:14px">`;
+    [["net","Demet Başı Net"],["price","Ort. Fiyat"]].forEach(([k,l]) => {
+      html += `<button class="preset-btn ${state.hmSort===k?'active':''}" onclick="setState({hmSort:'${k}'})">${l}</button>`;
+    });
+    html += `</div>`;
+    const hShow = state.expanded.heat ? 999 : 15;
+    const mx = hd[0] ? (state.hmSort === "net" ? hd[0].dbn : hd[0].avgP) : 1;
+    hd.slice(0, hShow).forEach((h, i) => {
+      const v = state.hmSort === "net" ? h.dbn : h.avgP;
+      const pct = mx > 0 ? (v / mx) * 100 : 0;
+      const intensity = pct / 100;
+      const colors = ["#fbbf24","#cbd5e1","#c49a6c"];
+      html += `<div class="heat-row"><div style="width:20px;text-align:center;font-size:10px;font-weight:700;color:${i<3?colors[i]:'#475569'}">${i+1}</div><div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(h.cicek)}</div><div style="font-size:10px;color:#64748b">${esc(h.sube)} · ${h.d}dm</div></div><div style="width:80px"><div style="height:6px;background:rgba(255,255,255,0.04);border-radius:3px"><div style="height:100%;border-radius:3px;width:${pct}%;background:rgba(34,197,94,${(0.3+intensity*0.5).toFixed(2)})"></div></div></div><div style="width:60px;text-align:right;font-size:13px;font-weight:700;color:rgba(52,211,153,${(0.5+intensity*0.5).toFixed(2)})">${fmt(v)}</div></div>`;
+    });
+    if (hd.length > 15) html += `<button class="show-more" style="margin-top:8px" onclick="toggleExp('heat')">${state.expanded.heat?'Daha az ▲':'Tümü ('+hd.length+' kombo) ▼'}</button>`;
+  }
+
+  // ══ TABLO ══
+  if (state.tab === "tablo") {
+    html += `<div class="sec-title">Kayıtlar (${filtered.length})</div>`;
+    html += `<div class="card" style="padding:0;overflow:hidden">`;
+    html += `<div class="tbl-head tbl-cols"><span>Tarih</span><span>Çiçek</span><span>Şube</span><span style="text-align:center">Dm</span><span style="text-align:right">Fiyat</span><span style="text-align:right">Net</span></div>`;
+    html += `<div style="max-height:450px;overflow-y:auto">`;
+    const sorted = [...filtered].sort((a, b) => b.t.localeCompare(a.t) || b.f - a.f);
+    sorted.slice(0, 200).forEach(r => {
+      html += `<div class="tbl-row tbl-cols"><span style="color:#64748b;font-size:10px">${fD(r.t)}</span><span style="color:#e2e8f0;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.c)}</span><span style="color:#94a3b8;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.s)}</span><span style="color:#cbd5e1;text-align:center">${r.d}</span><span style="color:#f8fafc;font-weight:600;text-align:right">${r.f.toFixed(0)}</span><span style="color:#34d399;font-weight:600;text-align:right">${r.dbn.toFixed(0)}</span></div>`;
+    });
+    if (sorted.length > 200) html += `<div style="text-align:center;padding:12px;color:#64748b;font-size:11px">İlk 200 kayıt gösteriliyor (toplam ${sorted.length})</div>`;
+    html += `</div></div>`;
+    if (!filtered.length) html += `<div style="text-align:center;padding:40px;color:#475569">Kayıt bulunamadı.</div>`;
+  }
+
+  // ══ GEÇEN YIL ══
+  if (state.tab === "yoy") {
+    const y = getYoY(filtered);
+    html += `<div class="sec-title">Geçen Yıl Karşılaştırması</div>`;
+    if (!y.has) {
+      html += `<div class="card" style="background:rgba(250,204,21,0.06);border-color:rgba(250,204,21,0.12);text-align:center;padding:30px"><div style="font-size:14px;color:#fbbf24;margin-bottom:6px">Geçen yıl verisi yok</div><div style="font-size:12px;color:#94a3b8">Tarih aralığını "7 Gün" veya "Bu Ay" olarak değiştirip tekrar dene.</div></div>`;
+    } else {
+      html += `<div class="grid-2" style="margin-bottom:14px">`;
+      html += `<div class="card"><div style="font-size:10px;color:#64748b;margin-bottom:4px">2025</div><div style="font-size:18px;font-weight:800;color:#94a3b8">${fmt(y.lC)}</div><div style="font-size:10px;color:#475569;margin-top:3px">${y.lD}dm · ${fmt(y.lA)} ort</div></div>`;
+      html += `<div class="card card-green"><div style="font-size:10px;color:#64748b;margin-bottom:4px">2026</div><div style="font-size:18px;font-weight:800;color:#4ade80">${fmt(y.tC)}</div><div style="font-size:10px;color:#475569;margin-top:3px">${y.tD}dm · ${fmt(y.tA)} ort</div></div>`;
+      html += `</div>`;
+      html += `<div class="card" style="text-align:center;margin-bottom:14px"><div style="display:flex;justify-content:center;gap:30px"><div><div style="font-size:10px;color:#94a3b8">Ciro</div><div style="font-size:20px;font-weight:800;margin-top:4px">${trendHTML(y.cCh)}</div></div><div><div style="font-size:10px;color:#94a3b8">Ort. Fiyat</div><div style="font-size:20px;font-weight:800;margin-top:4px">${trendHTML(y.pCh)}</div></div></div></div>`;
+      html += `<div class="card" style="background:rgba(96,165,250,0.06);border-color:rgba(96,165,250,0.12)"><div style="font-size:12px;font-weight:600;color:#60a5fa;margin-bottom:6px">📊 Yorum</div><div style="font-size:13px;color:#cbd5e1;line-height:1.5">${y.cCh>0?'Bu dönem geçen yıla göre %'+y.cCh.toFixed(0)+' daha fazla ciro.':'Ciro %'+Math.abs(y.cCh).toFixed(0)+' geride.'}${y.pCh!=null?(y.pCh>0?' Fiyatlar %'+y.pCh.toFixed(0)+' artmış.':' Fiyatlar %'+Math.abs(y.pCh).toFixed(0)+' düşmüş.'):''}</div></div>`;
+    }
+  }
+
+  // ══ AI ══
+  if (state.tab === "ai") {
+    html += `<div class="sec-title">AI Çiçek Danışmanı</div>`;
+    html += `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:14px">`;
+    ["En kârlı 5 kombo?","Hangi şubeye göndermeli?","Bu dönemi özetle","Fiyat trendi?","Geçen yıla göre?"].forEach(q => {
+      html += `<button class="ai-chip" onclick="setAIQ('${q}')">${q}</button>`;
+    });
+    html += `</div>`;
+    html += `<div style="margin-bottom:14px;max-height:380px;overflow-y:auto">`;
+    state.aiH.forEach(m => {
+      html += `<div class="ai-msg ${m.r==='u'?'ai-msg-user':'ai-msg-ai'}"><div style="font-size:9px;color:${m.r==='u'?'#a78bfa':'#34d399'};margin-bottom:3px;font-weight:600">${m.r==='u'?'Sen':'✦ AI Uzman'}</div><div style="font-size:12px;color:#e2e8f0;line-height:1.6;white-space:pre-wrap">${esc(m.t)}</div></div>`;
+    });
+    if (state.aiL) html += `<div class="ai-msg ai-msg-ai"><div style="color:#64748b;font-size:12px">Analiz ediliyor...</div></div>`;
+    html += `</div>`;
+    html += `<div style="display:flex;gap:8px"><input class="ai-input" id="aiInput" value="${esc(state.aiQ)}" placeholder="Sor: Lisyantus'u nereye göndermeli?" onkeydown="if(event.key==='Enter')handleAI()"><button class="ai-send" style="background:${state.aiQ.trim()?'linear-gradient(135deg,#7c3aed,#6d28d9)':'rgba(255,255,255,0.06)'};color:${state.aiQ.trim()?'#fff':'#475569'}" onclick="handleAI()">Sor</button></div>`;
+  }
+
+  html += `</div>`;
+  document.getElementById("app").innerHTML = html;
+
+  // Restore AI input focus
+  if (state.tab === "ai") {
+    const inp = document.getElementById("aiInput");
+    if (inp) inp.addEventListener("input", e => state.aiQ = e.target.value);
+  }
+}
+
+// ═══════════════ DROPDOWN RENDERER ═══════════════
+function renderDropdown(label, value, stateKey, grouped) {
+  const isOpen = state.ddOpen === stateKey;
+  const options = stateKey === "sf" ? FLOWERS : BRANCHES;
+  let display = value ? value.replace("GRUP:", "") + (value.startsWith("GRUP:") ? " (Grup)" : "") : "Tümü";
+
+  let html = `<div class="dropdown"><div class="lbl">${label}</div>`;
+  html += `<button class="dropdown-btn ${value?'has-val':''}" onclick="event.stopPropagation();setState({ddOpen:state.ddOpen==='${stateKey}'?null:'${stateKey}'})"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(display)}</span><span style="font-size:8px;color:#64748b">${isOpen?'▲':'▼'}</span></button>`;
+
+  if (isOpen) {
+    html += `<div class="dropdown-list">`;
+    html += `<div class="dropdown-item ${!value?'active':''}" onclick="event.stopPropagation();setState({${stateKey}:null,ddOpen:null})">Tümü</div>`;
+    if (grouped && GROUP_NAMES.length > 0) {
+      GROUP_NAMES.forEach(grp => {
+        const grpVal = "GRUP:" + grp;
+        html += `<div class="dropdown-item group-header ${value===grpVal?'active':''}" onclick="event.stopPropagation();setState({${stateKey}:'${grpVal}',ddOpen:null})">${esc(grp)} (Tümü)</div>`;
+        (CICEK_GROUPS[grp] || []).forEach(item => {
+          html += `<div class="dropdown-item sub-item ${value===item?'active':''}" onclick="event.stopPropagation();setState({${stateKey}:'${item}',ddOpen:null})">${esc(item.replace(grp+" ",""))}</div>`;
+        });
+      });
+      // Ungrouped flowers
+      const grouped_flowers = Object.values(CICEK_GROUPS).flat();
+      const ungrouped = options.filter(f => !grouped_flowers.includes(f));
+      ungrouped.forEach(f => {
+        html += `<div class="dropdown-item ${value===f?'active':''}" onclick="event.stopPropagation();setState({${stateKey}:'${f}',ddOpen:null})">${esc(f)}</div>`;
+      });
+    } else {
+      options.forEach(o => {
+        html += `<div class="dropdown-item ${value===o?'active':''}" onclick="event.stopPropagation();setState({${stateKey}:'${o}',ddOpen:null})">${esc(o)}</div>`;
+      });
+    }
+    html += `</div>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+// ═══════════════ ACTIONS ═══════════════
+function setPreset(p) {
+  const today = new Date().toISOString().split("T")[0];
+  const year = today.substring(0, 4);
+  const month = today.substring(0, 7);
+  if (p === "today") setState({ sd: today, ed: today });
+  else if (p === "week") {
+    const d = new Date(); d.setDate(d.getDate() - 6);
+    setState({ sd: d.toISOString().split("T")[0], ed: today });
+  }
+  else if (p === "month") setState({ sd: month + "-01", ed: today });
+  else if (p === "all") setState({ sd: "2020-01-01", ed: today });
+}
+
+function toggleExp(key) {
+  state.expanded[key] = !state.expanded[key];
+  render();
+}
+
+function setAIQ(q) {
+  state.aiQ = q;
+  render();
+}
+
+async function handleAI() {
+  const q = state.aiQ.trim();
+  if (!q) return;
+  state.aiH.push({ r: "u", t: q });
+  state.aiQ = "";
+  state.aiL = true;
+  render();
+
+  const filtered = getFiltered();
+  const stats = calcStats(filtered);
+  const hd = getHeatData(filtered);
+  const bc = getBranchComp(filtered);
+  const yoy = getYoY(filtered);
+
+  const ctx = "VERİ (" + fD(state.sd) + "-" + fD(state.ed) + "): Ciro:" + fmt(stats.tc) + ", Net:" + fmt(stats.tn) + ", " + stats.td + "dm, Ort:" + fmt2(stats.av) +
+    "\nÇiçek(dbn): " + stats.byF.slice(0, 10).map(f => f.name + ":" + fmt(f.dbn) + "/dm," + f.d + "dm").join("; ") +
+    "\nŞube: " + stats.byB.slice(0, 10).map(b => b.name + ":" + fmt(b.avgP) + "," + fmt(b.net) + "net").join("; ") +
+    "\nTopKombo: " + hd.slice(0, 10).map(h => h.cicek + "→" + h.sube + ":" + fmt(h.dbn) + "/dm").join("; ") +
+    "\nGeçenYıl: " + (yoy.has ? "2025:" + fmt(yoy.lC) + ",2026:" + fmt(yoy.tC) : "veri yok");
+
+  try {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "anthropic-dangerous-direct-browser-access": "true" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514", max_tokens: 1000,
+        system: "Sen çiçek mezat analisti. Türkçe, kısa, aksiyon odaklı cevap ver. Gider %20.\n" + ctx,
+        messages: [{ role: "user", content: q }]
+      })
+    });
+    const data = await resp.json();
+    const ans = data.content?.map(b => b.text || "").join("\n") || localAnswer(q, stats, bc, hd, yoy);
+    state.aiH.push({ r: "a", t: ans });
+  } catch (e) {
+    state.aiH.push({ r: "a", t: localAnswer(q, stats, bc, hd, yoy) });
+  }
+  state.aiL = false;
+  render();
+}
+
+function localAnswer(q, stats, bc, hd, yoy) {
+  const ql = q.toLowerCase();
+  if (ql.includes("kombo") || ql.includes("kârlı"))
+    return "En Kârlı 5 Kombinasyon:\n" + hd.slice(0, 5).map((h, i) => (i + 1) + ". " + h.cicek + " → " + h.sube + ": " + fmt(h.dbn) + "/dm (" + h.d + "dm)").join("\n");
+  if (ql.includes("şube") || ql.includes("nereye") || ql.includes("göndermeli"))
+    return bc.slice(0, 5).map(c => c.flower + ":\n" + c.branches.slice(0, 3).map((b, i) => "  " + (i === 0 ? "🏆" : " ") + " " + b.name + ": " + fmt(b.avgP) + " (" + b.d + "dm)").join("\n")).join("\n\n");
+  if (ql.includes("özetle") || ql.includes("özet"))
+    return "Dönem Özeti:\n• Ciro: " + fmt(stats.tc) + " | Net: " + fmt(stats.tn) + "\n• " + stats.td + " demet | Ort: " + fmt2(stats.av) + "\n• En kârlı: " + (stats.byF[0]?.name || "—") + " (" + fmt(stats.byF[0]?.dbn || 0) + "/dm)\n• En iyi şube: " + (stats.byB[0]?.name || "—") + " (" + fmt(stats.byB[0]?.net || 0) + " net)";
+  if (ql.includes("trend") || ql.includes("fiyat")) {
+    if (stats.dl.length < 2) return "En az 2 gün seç.";
+    const f = stats.dl[0], l = stats.dl[stats.dl.length - 1];
+    return "Fiyat Trendi:\n" + fD(f.date) + ": " + fmt(f.avgP) + " → " + fD(l.date) + ": " + fmt(l.avgP) + "\nDeğişim: %" + ((l.avgP - f.avgP) / f.avgP * 100).toFixed(1);
+  }
+  if (ql.includes("geçen yıl") || ql.includes("2025"))
+    return yoy.has ? "2025: " + fmt(yoy.lC) + " (" + yoy.lD + "dm)\n2026: " + fmt(yoy.tC) + " (" + yoy.tD + "dm)\nCiro: %" + (yoy.cCh?.toFixed(1) || "—") + " | Fiyat: %" + (yoy.pCh?.toFixed(1) || "—") : "Geçen yıl verisi yok.";
+  return "Ciro: " + fmt(stats.tc) + " | Net: " + fmt(stats.tn) + " | " + stats.td + " dm\nEn iyi: " + (stats.byF[0]?.name || "—") + "\n\nDaha spesifik sor: 'En kârlı kombo' veya 'Bu dönemi özetle'";
+}
+
+// Close dropdowns on outside click
+document.addEventListener("click", () => { if (state.ddOpen) setState({ ddOpen: null }); });
+
+// ═══════════════ INIT ═══════════════
+async function init() {
+  try {
+    const count = await loadAllData();
+    if (count === 0) {
+      document.getElementById("app").innerHTML = '<div class="loading-screen"><div style="font-size:16px;color:#f87171;margin-bottom:8px">Veri bulunamadı</div><div style="font-size:12px;color:#94a3b8">Google Sheets bağlantısını kontrol et.</div></div>';
+      return;
+    }
+    render();
+  } catch (e) {
+    document.getElementById("app").innerHTML = '<div class="loading-screen"><div style="font-size:16px;color:#f87171;margin-bottom:8px">Hata: ' + esc(e.message) + '</div><div style="font-size:12px;color:#94a3b8">Sayfa yenilenip tekrar dene.</div></div>';
+  }
+}
+
+init();
+</script>
+</body>
+</html>
