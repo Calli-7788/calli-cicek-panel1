@@ -206,13 +206,29 @@ async function loadAllData() {
       const resp = await fetch(SHEETS[name]);
       if (!resp.ok) { console.warn("Sheet yüklenemedi:", name); continue; }
       const text = await resp.text();
+      
+      // DEBUG: Log first 3 lines of raw CSV
+      const rawLines = text.split("\n").slice(0, 4);
+      console.log("=== RAW CSV (" + name + ") ===");
+      rawLines.forEach((line, i) => console.log("Satır " + i + ":", line));
+      
       const rows = parseCSV(text);
+      
+      // DEBUG: Log first parsed row with all keys
+      if (rows.length > 0) {
+        console.log("=== PARSED KEYS (" + name + ") ===", Object.keys(rows[0]));
+        console.log("=== FIRST ROW (" + name + ") ===", JSON.stringify(rows[0]));
+        console.log("=== SECOND ROW (" + name + ") ===", JSON.stringify(rows[1]));
+        const testRec = normalizeRecord(rows[0]);
+        console.log("=== NORMALIZED (" + name + ") ===", JSON.stringify(testRec));
+      }
+      
       let count = 0;
       rows.forEach(raw => {
         const rec = normalizeRecord(raw);
         if (rec) { allRecords.push(rec); count++; }
       });
-      console.log("Sheet:", name, "→", count, "kayıt yüklendi");
+      console.log("Sheet:", name, "→", rows.length, "CSV satırı,", count, "geçerli kayıt yüklendi");
     } catch (e) {
       console.warn("Sheet yüklenemedi:", name, e);
     }
@@ -220,6 +236,11 @@ async function loadAllData() {
 
   ALL_DATA = allRecords;
   console.log("Toplam kayıt:", ALL_DATA.length);
+  
+  // DEBUG: Count records per date
+  const dateCounts = {};
+  ALL_DATA.forEach(r => { dateCounts[r.t] = (dateCounts[r.t] || 0) + 1; });
+  console.log("=== TARİH BAZLI KAYIT SAYILARI ===", JSON.stringify(dateCounts));
   FLOWERS = [...new Set(ALL_DATA.map(r => r.c))].sort();
   BRANCHES = [...new Set(ALL_DATA.map(r => r.s))].sort();
 
