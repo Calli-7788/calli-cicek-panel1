@@ -150,7 +150,7 @@ function normalizeRecord(raw) {
   const cicekKey = find("Çiçek", "Cicek", "çiçek", "cicek");
   const adetKey = find("Adet", "adet");
   const demetKey = find("Demet", "demet");
-  const birimKey = find("Birim", "birim");
+  const birimKey = keys.find(k => k.toLowerCase().includes("birim")) || find("Birim Fiyat", "Birim fiyat");
   const tarihKey = find("Tarih", "tarih");
 
   const sube = raw[subeKey] || "";
@@ -186,9 +186,9 @@ function normalizeRecord(raw) {
   return {
     s: sube, c: cicek.toUpperCase(), a: adet, d: demet,
     f: birimFiyat, t: tarih,
-    ciro: birimFiyat * demet,
-    net: birimFiyat * demet * (1 - GIDER),
-    dbn: birimFiyat * (1 - GIDER)
+    ciro: birimFiyat,                          // Birim Fiyat = toplam satır fiyatı
+    net: birimFiyat * (1 - GIDER),             // Net = toplam × 0.80
+    dbn: demet > 0 ? (birimFiyat * (1 - GIDER)) / demet : 0  // Demet başı net
   };
 }
 
@@ -202,6 +202,7 @@ let GROUP_NAMES = [];
 async function loadAllData() {
   const allRecords = [];
   const sheetNames = Object.keys(SHEETS);
+  const seen = new Set(); // For deduplication
 
   for (const name of sheetNames) {
     try {
@@ -211,7 +212,14 @@ async function loadAllData() {
       const rows = parseCSV(text);
       rows.forEach(raw => {
         const rec = normalizeRecord(raw);
-        if (rec) allRecords.push(rec);
+        if (rec) {
+          // Create unique key: tarih + şube + çiçek + demet + birimFiyat
+          const key = rec.t + "|" + rec.s + "|" + rec.c + "|" + rec.d + "|" + rec.f.toFixed(2);
+          if (!seen.has(key)) {
+            seen.add(key);
+            allRecords.push(rec);
+          }
+        }
       });
     } catch (e) {
       console.warn("Sheet yüklenemedi:", name, e);
