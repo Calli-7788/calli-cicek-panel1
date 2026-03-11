@@ -91,7 +91,8 @@ input,button,select{font-family:inherit}
 <script>
 // ═══════════════ CONFIG ═══════════════
 const SHEETS = {
-  "GUNCEL": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=1698698520&single=true&output=csv"
+  "GUNCEL": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=1698698520&single=true&output=csv",
+  "2025": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=1807975712&single=true&output=csv"
 };
 const GIDER = 0.20;
 
@@ -509,10 +510,6 @@ function render() {
       html += `<div class="card" style="margin-bottom:6px;padding:12px 14px"><div style="display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:13px;font-weight:600;color:#f8fafc">${esc(b.name)}</div><div style="font-size:10px;color:#64748b">${b.d}dm · ${fmt2(b.avgP)}</div></div><div style="text-align:right"><div style="font-size:13px;font-weight:700;color:#34d399">${fmt(b.net)}</div></div></div><div class="bar-bg"><div class="bar-fill" style="width:${w}%"></div></div></div>`;
     });
     if (stats.byB.length > 5) html += `<button class="show-more" onclick="toggleExp('branches')">${state.expanded.branches?'Daha az ▲':'Tüm şubeler ('+stats.byB.length+') ▼'}</button>`;
-
-    // DEBUG INFO section
-    html += `<div class="sec-title" style="margin-top:30px">🔧 Veri Kontrolü</div>`;
-    html += `<div class="card" style="font-size:10px;color:#94a3b8;line-height:1.8;word-break:break-all;white-space:pre-wrap">${esc(DEBUG_INFO)}</div>`;
   }
 
   // ══ KARŞILAŞTIR ══
