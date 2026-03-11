@@ -91,7 +91,6 @@ input,button,select{font-family:inherit}
 <script>
 // ═══════════════ CONFIG ═══════════════
 const SHEETS = {
-  GUNCEL: "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=1698698520&single=true&output=csv",
   "2026": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=0&single=true&output=csv",
   "2025": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=1807975712&single=true&output=csv"
 };
@@ -200,56 +199,28 @@ let CICEK_GROUPS = {};
 let GROUP_NAMES = [];
 
 async function loadAllData() {
-  const sheetData = {}; // name -> records[]
+  const allRecords = [];
   const sheetNames = Object.keys(SHEETS);
 
-  // Load all sheets
   for (const name of sheetNames) {
-    sheetData[name] = [];
     try {
       const resp = await fetch(SHEETS[name]);
-      if (!resp.ok) continue;
+      if (!resp.ok) { console.warn("Sheet yüklenemedi:", name); continue; }
       const text = await resp.text();
       const rows = parseCSV(text);
+      let count = 0;
       rows.forEach(raw => {
         const rec = normalizeRecord(raw);
-        if (rec) sheetData[name].push(rec);
+        if (rec) { allRecords.push(rec); count++; }
       });
+      console.log("Sheet:", name, "→", count, "kayıt yüklendi");
     } catch (e) {
       console.warn("Sheet yüklenemedi:", name, e);
     }
   }
 
-  // Find dates that exist in GUNCEL
-  const guncelDates = new Set();
-  if (sheetData["GUNCEL"]) {
-    sheetData["GUNCEL"].forEach(r => guncelDates.add(r.t));
-  }
-
-  // Merge: use GUNCEL records for those dates, skip them from 2026
-  const allRecords = [];
-
-  // First add GUNCEL records
-  if (sheetData["GUNCEL"]) {
-    sheetData["GUNCEL"].forEach(r => allRecords.push(r));
-  }
-
-  // Then add 2026 records but SKIP dates already in GUNCEL
-  if (sheetData["2026"]) {
-    sheetData["2026"].forEach(r => {
-      if (!guncelDates.has(r.t)) {
-        allRecords.push(r);
-      }
-    });
-  }
-
-  // Add 2025 records (no overlap)
-  if (sheetData["2025"]) {
-    sheetData["2025"].forEach(r => allRecords.push(r));
-  }
-
   ALL_DATA = allRecords;
-  console.log("Toplam kayıt:", ALL_DATA.length, "GUNCEL:", sheetData["GUNCEL"]?.length || 0, "2026:", sheetData["2026"]?.length || 0, "2025:", sheetData["2025"]?.length || 0, "GUNCEL tarihleri:", [...guncelDates]);
+  console.log("Toplam kayıt:", ALL_DATA.length);
   FLOWERS = [...new Set(ALL_DATA.map(r => r.c))].sort();
   BRANCHES = [...new Set(ALL_DATA.map(r => r.s))].sort();
 
