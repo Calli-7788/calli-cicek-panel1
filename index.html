@@ -204,43 +204,40 @@ async function loadAllData() {
   for (const name of sheetNames) {
     try {
       const resp = await fetch(SHEETS[name]);
-      if (!resp.ok) { console.warn("Sheet yüklenemedi:", name); continue; }
+      if (!resp.ok) { DEBUG_INFO += name + ": HATA\n"; continue; }
       const text = await resp.text();
-      
-      // DEBUG: Log first 3 lines of raw CSV
-      const rawLines = text.split("\n").slice(0, 4);
-      console.log("=== RAW CSV (" + name + ") ===");
-      rawLines.forEach((line, i) => console.log("Satır " + i + ":", line));
-      
       const rows = parseCSV(text);
       
-      // DEBUG: Log first parsed row with all keys
+      // Capture debug info
       if (rows.length > 0) {
-        console.log("=== PARSED KEYS (" + name + ") ===", Object.keys(rows[0]));
-        console.log("=== FIRST ROW (" + name + ") ===", JSON.stringify(rows[0]));
-        console.log("=== SECOND ROW (" + name + ") ===", JSON.stringify(rows[1]));
+        const keys = Object.keys(rows[0]);
+        DEBUG_INFO += "KOLONLAR: " + keys.join(" | ") + "\n";
+        DEBUG_INFO += "İLK SATIR: " + JSON.stringify(rows[0]) + "\n";
         const testRec = normalizeRecord(rows[0]);
-        console.log("=== NORMALIZED (" + name + ") ===", JSON.stringify(testRec));
+        DEBUG_INFO += "PARSE: " + JSON.stringify(testRec) + "\n";
       }
       
       let count = 0;
+      let skipped = 0;
       rows.forEach(raw => {
         const rec = normalizeRecord(raw);
         if (rec) { allRecords.push(rec); count++; }
+        else { skipped++; }
       });
-      console.log("Sheet:", name, "→", rows.length, "CSV satırı,", count, "geçerli kayıt yüklendi");
+      DEBUG_INFO += name + ": " + rows.length + " CSV satırı, " + count + " geçerli, " + skipped + " atlandı\n";
     } catch (e) {
-      console.warn("Sheet yüklenemedi:", name, e);
+      DEBUG_INFO += name + ": HATA - " + e.message + "\n";
     }
   }
 
   ALL_DATA = allRecords;
-  console.log("Toplam kayıt:", ALL_DATA.length);
   
-  // DEBUG: Count records per date
-  const dateCounts = {};
-  ALL_DATA.forEach(r => { dateCounts[r.t] = (dateCounts[r.t] || 0) + 1; });
-  console.log("=== TARİH BAZLI KAYIT SAYILARI ===", JSON.stringify(dateCounts));
+  // Total demet and ciro for debug
+  const totalDemet = ALL_DATA.reduce((s, r) => s + r.d, 0);
+  const totalCiro = ALL_DATA.reduce((s, r) => s + r.ciro, 0);
+  const totalNet = ALL_DATA.reduce((s, r) => s + r.net, 0);
+  DEBUG_INFO += "TOPLAM: " + ALL_DATA.length + " kayıt, " + totalDemet + " demet, " + Math.round(totalCiro) + " ciro, " + Math.round(totalNet) + " net\n";
+
   FLOWERS = [...new Set(ALL_DATA.map(r => r.c))].sort();
   BRANCHES = [...new Set(ALL_DATA.map(r => r.s))].sort();
 
@@ -512,6 +509,10 @@ function render() {
       html += `<div class="card" style="margin-bottom:6px;padding:12px 14px"><div style="display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:13px;font-weight:600;color:#f8fafc">${esc(b.name)}</div><div style="font-size:10px;color:#64748b">${b.d}dm · ${fmt2(b.avgP)}</div></div><div style="text-align:right"><div style="font-size:13px;font-weight:700;color:#34d399">${fmt(b.net)}</div></div></div><div class="bar-bg"><div class="bar-fill" style="width:${w}%"></div></div></div>`;
     });
     if (stats.byB.length > 5) html += `<button class="show-more" onclick="toggleExp('branches')">${state.expanded.branches?'Daha az ▲':'Tüm şubeler ('+stats.byB.length+') ▼'}</button>`;
+
+    // DEBUG INFO section
+    html += `<div class="sec-title" style="margin-top:30px">🔧 Veri Kontrolü</div>`;
+    html += `<div class="card" style="font-size:10px;color:#94a3b8;line-height:1.8;word-break:break-all;white-space:pre-wrap">${esc(DEBUG_INFO)}</div>`;
   }
 
   // ══ KARŞILAŞTIR ══
@@ -736,16 +737,18 @@ function localAnswer(q, stats, bc, hd, yoy) {
 document.addEventListener("click", () => { if (state.ddOpen) setState({ ddOpen: null }); });
 
 // ═══════════════ INIT ═══════════════
+let DEBUG_INFO = "";
+
 async function init() {
   try {
     const count = await loadAllData();
     if (count === 0) {
-      document.getElementById("app").innerHTML = '<div class="loading-screen"><div style="font-size:16px;color:#f87171;margin-bottom:8px">Veri bulunamadı</div><div style="font-size:12px;color:#94a3b8">Google Sheets bağlantısını kontrol et.</div></div>';
+      document.getElementById("app").innerHTML = '<div class="loading-screen"><div style="font-size:16px;color:#f87171;margin-bottom:8px">Veri bulunamadı</div><div style="font-size:12px;color:#94a3b8">Google Sheets bağlantısını kontrol et.</div><div style="margin-top:20px;font-size:10px;color:#64748b;text-align:left;max-width:350px;word-break:break-all">' + esc(DEBUG_INFO) + '</div></div>';
       return;
     }
     render();
   } catch (e) {
-    document.getElementById("app").innerHTML = '<div class="loading-screen"><div style="font-size:16px;color:#f87171;margin-bottom:8px">Hata: ' + esc(e.message) + '</div><div style="font-size:12px;color:#94a3b8">Sayfa yenilenip tekrar dene.</div></div>';
+    document.getElementById("app").innerHTML = '<div class="loading-screen"><div style="font-size:16px;color:#f87171;margin-bottom:8px">Hata: ' + esc(e.message) + '</div></div>';
   }
 }
 
