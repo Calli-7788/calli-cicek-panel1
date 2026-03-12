@@ -1216,17 +1216,12 @@ async function handleAI() {
     "\nGeçenYıl: " + (yoy.has ? "2025:" + fmt(yoy.lC) + ",2026:" + fmt(yoy.tC) : "veri yok");
 
   try {
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    const systemPrompt = "Sen bir çiçek mezat analisti ve danışmanısın. Kullanıcı Yalova'da çiçek üreticisi — Flora mezatına (Hollanda tipi açık artırma) çiçek gönderiyor. Türkçe cevap ver. Kısa, net ve aksiyon odaklı ol. Sayıları ve TL değerlerini kullan. Somut önerilerde bulun. Gider oranı %20 sabit.\n\nVERİLER:\n" + ctx;
+    const resp = await fetch("/api/chat", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": "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",
-        "anthropic-version": "2023-06-01",
-        "anthropic-dangerous-direct-browser-access": "true"
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514", max_tokens: 1000,
-        system: "Sen bir çiçek mezat analisti ve danışmanısın. Kullanıcı Yalova'da çiçek üreticisi — Flora mezatına (Hollanda tipi açık artırma) çiçek gönderiyor. Türkçe cevap ver. Kısa, net ve aksiyon odaklı ol. Sayıları ve TL değerlerini kullan. Somut önerilerde bulun. Gider oranı %20 sabit.\n\nVERİLER:\n" + ctx,
+        system: systemPrompt,
         messages: [{ role: "user", content: q }]
       })
     });
