@@ -600,7 +600,7 @@ function render() {
   html += `</div>`;
 
   // Tabs
-  const tabList = [{id:"panel",l:"Panel",i:"◉"},{id:"compare",l:"Karşılaştır",i:"⚡"},{id:"heat",l:"Kâr Haritası",i:"🔥"},{id:"tablo",l:"Tablo",i:"☰"},{id:"yoy",l:"Geçen Yıl",i:"📊"},{id:"ai",l:"AI",i:"✦"}];
+  const tabList = [{id:"panel",l:"Panel",i:"◉"},{id:"sube",l:"Şube Tablosu",i:"📋"},{id:"compare",l:"Karşılaştır",i:"⚡"},{id:"heat",l:"Kâr Haritası",i:"🔥"},{id:"tablo",l:"Tablo",i:"☰"},{id:"yoy",l:"Geçen Yıl",i:"📊"},{id:"rapor",l:"Rapor",i:"📄"},{id:"ai",l:"AI",i:"✦"}];
   html += `<div class="tabs">`;
   tabList.forEach(t => {
     html += `<button class="tab-btn ${state.tab===t.id?'active':''}" onclick="setState({tab:'${t.id}',ddOpen:null})">${t.i} ${t.l}</button>`;
@@ -611,6 +611,46 @@ function render() {
 
   // ══ PANEL ══
   if (state.tab === "panel") {
+    // Günün Özeti - sadece bugün seçiliyse veya bugünün verisi varsa göster
+    const todayStr = new Date().toISOString().split("T")[0];
+    const todayData = ALL_DATA.filter(r => r.t === todayStr);
+    if (todayData.length > 0 && state.sd === todayStr) {
+      const tNet = todayData.reduce((s,r) => s + r.net, 0);
+      const tDem = todayData.reduce((s,r) => s + r.d, 0);
+      const tAvg = tDem > 0 ? tNet / tDem : 0;
+      // En iyi çiçek bugün
+      const todayByF = {};
+      todayData.forEach(r => {
+        if (!todayByF[r.c]) todayByF[r.c] = { net: 0, d: 0 };
+        todayByF[r.c].net += r.net; todayByF[r.c].d += r.d;
+      });
+      const bestF = Object.entries(todayByF).map(([n,v]) => ({ name:n, dbn: v.d>0?v.net/v.d:0, net:v.net, d:v.d })).sort((a,b) => b.dbn - a.dbn)[0];
+      // En iyi şube bugün
+      const todayByB = {};
+      todayData.forEach(r => {
+        if (!todayByB[r.s]) todayByB[r.s] = { net: 0, d: 0 };
+        todayByB[r.s].net += r.net; todayByB[r.s].d += r.d;
+      });
+      const bestB = Object.entries(todayByB).map(([n,v]) => ({ name:n, net:v.net, d:v.d })).sort((a,b) => b.net - a.net)[0];
+      // Dün ile karşılaştır
+      const yestStr = new Date(Date.now() - 864e5).toISOString().split("T")[0];
+      const yestData = ALL_DATA.filter(r => r.t === yestStr);
+      const yNet = yestData.reduce((s,r) => s + r.net, 0);
+
+      html += `<div class="card" style="background:linear-gradient(135deg,rgba(251,191,36,0.08),rgba(245,158,11,0.03));border-color:rgba(251,191,36,0.12);margin-bottom:14px;padding:16px">`;
+      html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="font-size:15px;font-weight:700;color:#fbbf24">☀ Günün Özeti</div><div style="font-size:10px;color:#64748b">${fDF(todayStr)}</div></div>`;
+      html += `<div style="font-size:13px;color:#e2e8f0;line-height:1.7">`;
+      html += `Bugün <strong style="color:#4ade80">${fmt(tNet)}</strong> net gelir, <strong style="color:#f8fafc">${tDem}</strong> demet.`;
+      if (yNet > 0) {
+        const ch = ((tNet - yNet) / yNet * 100);
+        html += ` Düne göre <span style="color:${ch>0?'#34d399':'#f87171'};font-weight:600">${ch>0?'+':''}${ch.toFixed(0)}%</span>.`;
+      }
+      html += `<br>`;
+      if (bestF) html += `En kârlı çiçek: <strong style="color:#fbbf24">${esc(bestF.name)}</strong> (${fmt(bestF.dbn)}/dm). `;
+      if (bestB) html += `En iyi şube: <strong style="color:#fbbf24">${esc(bestB.name)}</strong> (${fmt(bestB.net)} net).`;
+      html += `</div></div>`;
+    }
+
     html += `<div class="grid-2" style="margin-bottom:6px">`;
     html += `<div class="card card-green"><div class="lbl">Ciro</div><div class="val-big" style="color:#4ade80">${fmt(stats.tc)}</div>${stats.cc!=null?'<div style="margin-top:4px">'+trendHTML(stats.cc)+'</div>':''}</div>`;
     html += `<div class="card"><div class="lbl">Net Gelir</div><div class="val-big" style="color:#f8fafc">${fmt(stats.tn)}</div></div>`;
@@ -672,6 +712,95 @@ function render() {
       html += `</div>`;
     });
     if (stats.byB.length > 5) html += `<button class="show-more" onclick="toggleExp('branches')">${state.expanded.branches?'Daha az ▲':'Tüm şubeler ('+stats.byB.length+') ▼'}</button>`;
+  }
+
+  // ══ ŞUBE TABLOSU ══
+  if (state.tab === "sube") {
+    html += `<div class="sec-title">Şube Performans Karşılaştırması</div>`;
+    html += `<div style="font-size:12px;color:#94a3b8;margin-bottom:14px;margin-top:-6px">Tüm şubeleri yan yana karşılaştır</div>`;
+
+    // Build branch performance data
+    const brPerf = {};
+    filtered.forEach(r => {
+      if (!brPerf[r.s]) brPerf[r.s] = { net: 0, d: 0, ciro: 0, records: 0 };
+      brPerf[r.s].net += r.net;
+      brPerf[r.s].d += r.d;
+      brPerf[r.s].ciro += r.ciro;
+      brPerf[r.s].records += 1;
+    });
+    const brList = Object.entries(brPerf).map(([name, v]) => ({
+      name, ...v,
+      dbn: v.d > 0 ? v.net / v.d : 0,
+      avgP: v.d > 0 ? v.ciro / v.d : 0,
+    })).sort((a, b) => b.net - a.net);
+
+    const topNet = brList[0]?.net || 1;
+
+    // Table header
+    html += `<div class="card" style="padding:0;overflow:hidden;overflow-x:auto">`;
+    html += `<table style="width:100%;border-collapse:collapse;font-size:11px;min-width:380px">`;
+    html += `<thead><tr style="border-bottom:1px solid rgba(255,255,255,0.08)">`;
+    html += `<th style="padding:10px 8px;text-align:left;color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:0.5px;font-weight:600">Şube</th>`;
+    html += `<th style="padding:10px 8px;text-align:right;color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:0.5px;font-weight:600">Net Gelir</th>`;
+    html += `<th style="padding:10px 8px;text-align:right;color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:0.5px;font-weight:600">Demet</th>`;
+    html += `<th style="padding:10px 8px;text-align:right;color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:0.5px;font-weight:600">Dm Başı Net</th>`;
+    html += `<th style="padding:10px 8px;text-align:right;color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:0.5px;font-weight:600">Pay</th>`;
+    html += `</tr></thead><tbody>`;
+
+    const totalNet = brList.reduce((s, b) => s + b.net, 0);
+
+    brList.forEach((b, i) => {
+      const pct = totalNet > 0 ? (b.net / totalNet * 100) : 0;
+      const barW = topNet > 0 ? (b.net / topNet * 100) : 0;
+      const rowBg = i === 0 ? "rgba(34,197,94,0.06)" : i % 2 === 0 ? "rgba(255,255,255,0.02)" : "transparent";
+      html += `<tr style="border-bottom:1px solid rgba(255,255,255,0.03);background:${rowBg}">`;
+      html += `<td style="padding:10px 8px;color:#f8fafc;font-weight:${i===0?'600':'500'}">${i===0?'🏆 ':''}${esc(b.name)}</td>`;
+      html += `<td style="padding:10px 8px;text-align:right"><div style="color:#34d399;font-weight:600">${fmt(b.net)}</div><div style="height:3px;background:rgba(255,255,255,0.04);border-radius:2px;margin-top:3px"><div style="height:100%;border-radius:2px;width:${barW}%;background:#22c55e"></div></div></td>`;
+      html += `<td style="padding:10px 8px;text-align:right;color:#cbd5e1">${b.d}</td>`;
+      html += `<td style="padding:10px 8px;text-align:right;color:#e2e8f0;font-weight:600">${fmt(b.dbn)}</td>`;
+      html += `<td style="padding:10px 8px;text-align:right;color:#94a3b8">${pct.toFixed(1)}%</td>`;
+      html += `</tr>`;
+    });
+
+    // Totals row
+    const totalDbn = brList.reduce((s, b) => s + b.d, 0);
+    html += `<tr style="border-top:2px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.03)">`;
+    html += `<td style="padding:10px 8px;color:#f8fafc;font-weight:700">TOPLAM</td>`;
+    html += `<td style="padding:10px 8px;text-align:right;color:#4ade80;font-weight:700">${fmt(totalNet)}</td>`;
+    html += `<td style="padding:10px 8px;text-align:right;color:#f8fafc;font-weight:700">${totalDbn}</td>`;
+    html += `<td style="padding:10px 8px;text-align:right;color:#f8fafc;font-weight:700">${totalDbn > 0 ? fmt(totalNet / totalDbn) : '—'}</td>`;
+    html += `<td style="padding:10px 8px;text-align:right;color:#f8fafc;font-weight:700">100%</td>`;
+    html += `</tr>`;
+
+    html += `</tbody></table></div>`;
+
+    // Per-branch flower breakdown
+    html += `<div class="sec-title" style="margin-top:20px">Şube × Çiçek Detayı</div>`;
+    const brFlower = {};
+    filtered.forEach(r => {
+      const key = r.s;
+      if (!brFlower[key]) brFlower[key] = {};
+      if (!brFlower[key][r.c]) brFlower[key][r.c] = { net: 0, d: 0 };
+      brFlower[key][r.c].net += r.net;
+      brFlower[key][r.c].d += r.d;
+    });
+
+    brList.slice(0, state.expanded.subeDetail ? 999 : 5).forEach((b, i) => {
+      const flowers = brFlower[b.name] || {};
+      const fList = Object.entries(flowers).map(([n, v]) => ({ name: n, ...v, dbn: v.d > 0 ? v.net / v.d : 0 })).sort((a, b) => b.dbn - a.dbn);
+
+      html += `<div class="card" style="margin-bottom:8px;padding:12px 14px">`;
+      html += `<div style="font-size:13px;font-weight:600;color:#f8fafc;margin-bottom:8px">${esc(b.name)}</div>`;
+      fList.slice(0, 5).forEach((fl, j) => {
+        html += `<div style="display:flex;justify-content:space-between;padding:4px 0;border-top:${j>0?'1px solid rgba(255,255,255,0.03)':'none'}">`;
+        html += `<span style="font-size:11px;color:#cbd5e1">${esc(fl.name)}</span>`;
+        html += `<span style="font-size:11px"><span style="color:#64748b">${fl.d}dm</span> · <span style="color:#34d399;font-weight:600">${fmt(fl.dbn)}/dm</span></span>`;
+        html += `</div>`;
+      });
+      if (fList.length > 5) html += `<div style="font-size:10px;color:#475569;padding-top:4px">+${fList.length - 5} çiçek daha</div>`;
+      html += `</div>`;
+    });
+    if (brList.length > 5) html += `<button class="show-more" onclick="toggleExp('subeDetail')">${state.expanded.subeDetail?'Daha az ▲':'Tüm şubeler ('+brList.length+') ▼'}</button>`;
   }
 
   // ══ KARŞILAŞTIR ══
@@ -832,6 +961,49 @@ function render() {
     }
   }
 
+  // ══ RAPOR ══
+  if (state.tab === "rapor") {
+    html += `<div class="sec-title">Haftalık Rapor Oluştur</div>`;
+    html += `<div style="font-size:12px;color:#94a3b8;margin-bottom:16px;margin-top:-6px">PDF oluştur, WhatsApp veya e-posta ile paylaş</div>`;
+
+    // Report preview
+    const rStats = stats;
+    html += `<div class="card" style="margin-bottom:14px;background:rgba(255,255,255,0.04)">`;
+    html += `<div style="font-size:14px;font-weight:700;color:#f8fafc;margin-bottom:12px">📄 Rapor Önizleme</div>`;
+    html += `<div style="font-size:11px;color:#64748b;margin-bottom:10px">${dateLabel}</div>`;
+
+    // Summary
+    html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">`;
+    html += `<div style="padding:8px;border-radius:8px;background:rgba(34,197,94,0.08)"><div style="font-size:9px;color:#64748b">Net Gelir</div><div style="font-size:16px;font-weight:800;color:#4ade80">${fmt(rStats.tn)}</div></div>`;
+    html += `<div style="padding:8px;border-radius:8px;background:rgba(255,255,255,0.03)"><div style="font-size:9px;color:#64748b">Demet</div><div style="font-size:16px;font-weight:800;color:#f8fafc">${rStats.td}</div></div>`;
+    html += `</div>`;
+
+    // Top 5 flowers
+    html += `<div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">En Kârlı 5 Çiçek</div>`;
+    rStats.byF.slice(0, 5).forEach((f, i) => {
+      html += `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.03);font-size:12px">`;
+      html += `<span style="color:#e2e8f0">${i+1}. ${esc(f.name)}</span>`;
+      html += `<span style="color:#34d399;font-weight:600">${fmt(f.dbn)}/dm · ${f.d}dm</span>`;
+      html += `</div>`;
+    });
+
+    // Top 5 branches
+    html += `<div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin:12px 0 6px">En İyi 5 Şube</div>`;
+    rStats.byB.slice(0, 5).forEach((b, i) => {
+      html += `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.03);font-size:12px">`;
+      html += `<span style="color:#e2e8f0">${i+1}. ${esc(b.name)}</span>`;
+      html += `<span style="color:#34d399;font-weight:600">${fmt(b.net)} net</span>`;
+      html += `</div>`;
+    });
+    html += `</div>`;
+
+    // Generate PDF button
+    html += `<button onclick="generatePDF()" style="width:100%;padding:14px;border-radius:12px;border:none;cursor:pointer;font-size:14px;font-weight:600;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;margin-bottom:10px">📄 PDF Rapor Oluştur ve Paylaş</button>`;
+
+    // Copy text version
+    html += `<button onclick="copyReportText()" style="width:100%;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.1);cursor:pointer;font-size:13px;font-weight:500;background:rgba(255,255,255,0.04);color:#94a3b8">📋 Metin Olarak Kopyala (WhatsApp için)</button>`;
+  }
+
   // ══ AI ══
   if (state.tab === "ai") {
     html += `<div class="sec-title">AI Çiçek Danışmanı</div>`;
@@ -913,6 +1085,109 @@ function setPreset(p) {
 function toggleExp(key) {
   state.expanded[key] = !state.expanded[key];
   render();
+}
+
+function generateReportText() {
+  const filtered = getFiltered();
+  const stats = calcStats(filtered);
+  const dateLabel = state.sd !== state.ed ? fD(state.sd) + " – " + fD(state.ed) : fDF(state.sd);
+
+  let text = "🌸 ÇALLI ÇİÇEK — HAFTALIK RAPOR\n";
+  text += "📅 " + dateLabel + "\n\n";
+  text += "💰 Net Gelir: " + fmt(stats.tn) + "\n";
+  text += "📦 Demet: " + stats.td + "\n";
+  text += "📊 Ort. Fiyat: " + fmt2(stats.av) + "/dm\n\n";
+
+  text += "🏆 EN KÂRLI 5 ÇİÇEK:\n";
+  stats.byF.slice(0, 5).forEach((f, i) => {
+    text += (i + 1) + ". " + f.name + " — " + fmt(f.dbn) + "/dm (" + f.d + " dm)\n";
+  });
+
+  text += "\n📍 EN İYİ 5 ŞUBE:\n";
+  stats.byB.slice(0, 5).forEach((b, i) => {
+    text += (i + 1) + ". " + b.name + " — " + fmt(b.net) + " net (" + b.d + " dm)\n";
+  });
+
+  if (stats.cc != null) {
+    text += "\n📈 Önceki döneme göre: " + (stats.cc > 0 ? "+" : "") + stats.cc.toFixed(1) + "%\n";
+  }
+
+  return text;
+}
+
+function copyReportText() {
+  const text = generateReportText();
+  navigator.clipboard.writeText(text).then(() => {
+    alert("Rapor kopyalandı! WhatsApp'a yapıştırabilirsin.");
+  }).catch(() => {
+    // Fallback
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+    alert("Rapor kopyalandı!");
+  });
+}
+
+function generatePDF() {
+  const filtered = getFiltered();
+  const stats = calcStats(filtered);
+  const dateLabel = state.sd !== state.ed ? fD(state.sd) + " – " + fD(state.ed) : fDF(state.sd);
+
+  // Build HTML for PDF
+  let pdfHTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+    body{font-family:Arial,sans-serif;padding:30px;max-width:700px;margin:0 auto;color:#1a1a1a}
+    h1{font-size:22px;color:#16a34a;margin-bottom:4px}
+    h2{font-size:16px;color:#333;margin:20px 0 8px;border-bottom:2px solid #22c55e;padding-bottom:4px}
+    .subtitle{font-size:13px;color:#666;margin-bottom:20px}
+    .kpi-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin:16px 0}
+    .kpi{background:#f0fdf4;border-radius:8px;padding:12px;text-align:center}
+    .kpi-val{font-size:20px;font-weight:800;color:#16a34a}
+    .kpi-lbl{font-size:10px;color:#666;text-transform:uppercase;margin-bottom:4px}
+    table{width:100%;border-collapse:collapse;margin:8px 0}
+    th{background:#f8f8f8;padding:8px;text-align:left;font-size:11px;color:#666;text-transform:uppercase;border-bottom:2px solid #ddd}
+    td{padding:8px;border-bottom:1px solid #eee;font-size:12px}
+    .right{text-align:right}
+    .bold{font-weight:700}
+    .green{color:#16a34a}
+    .footer{margin-top:30px;padding-top:10px;border-top:1px solid #ddd;font-size:10px;color:#999;text-align:center}
+  </style></head><body>`;
+
+  pdfHTML += `<h1>🌸 Çallı Çiçek — Rapor</h1>`;
+  pdfHTML += `<div class="subtitle">${dateLabel}</div>`;
+
+  // KPIs
+  pdfHTML += `<div class="kpi-grid">`;
+  pdfHTML += `<div class="kpi"><div class="kpi-lbl">Net Gelir</div><div class="kpi-val">${fmt(stats.tn)}</div></div>`;
+  pdfHTML += `<div class="kpi"><div class="kpi-lbl">Demet</div><div class="kpi-val" style="color:#333">${stats.td}</div></div>`;
+  pdfHTML += `<div class="kpi"><div class="kpi-lbl">Ort. Dm Başı Net</div><div class="kpi-val">${fmt2(stats.av)}</div></div>`;
+  pdfHTML += `</div>`;
+
+  // Flower table
+  pdfHTML += `<h2>Çiçek Performansı</h2><table><thead><tr><th>#</th><th>Çiçek</th><th class="right">Demet</th><th class="right">Dm Başı Net</th><th class="right">Net Gelir</th></tr></thead><tbody>`;
+  stats.byF.forEach((f, i) => {
+    pdfHTML += `<tr><td>${i+1}</td><td class="bold">${f.name}</td><td class="right">${f.d}</td><td class="right green bold">${fmt(f.dbn)}</td><td class="right">${fmt(f.net)}</td></tr>`;
+  });
+  pdfHTML += `</tbody></table>`;
+
+  // Branch table
+  pdfHTML += `<h2>Şube Performansı</h2><table><thead><tr><th>#</th><th>Şube</th><th class="right">Demet</th><th class="right">Net Gelir</th><th class="right">Pay</th></tr></thead><tbody>`;
+  const totalNet = stats.byB.reduce((s, b) => s + b.net, 0);
+  stats.byB.forEach((b, i) => {
+    pdfHTML += `<tr><td>${i+1}</td><td class="bold">${b.name}</td><td class="right">${b.d}</td><td class="right green bold">${fmt(b.net)}</td><td class="right">${(b.net/totalNet*100).toFixed(1)}%</td></tr>`;
+  });
+  pdfHTML += `</tbody></table>`;
+
+  pdfHTML += `<div class="footer">Çallı Çiçek Üretici Paneli · Otomatik oluşturulmuştur</div>`;
+  pdfHTML += `</body></html>`;
+
+  // Open in new window for printing/saving as PDF
+  const w = window.open("", "_blank");
+  w.document.write(pdfHTML);
+  w.document.close();
+  setTimeout(() => w.print(), 500);
 }
 
 function setAIQ(q) {
