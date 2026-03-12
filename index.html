@@ -391,13 +391,65 @@ function getYoY(filtered) {
   const lastD = ALL_DATA.filter(r => r.t >= ls && r.t <= le &&
     (!state.sf || (state.sf.startsWith("GRUP:") ? r.c.startsWith(state.sf.replace("GRUP:", "")) : r.c === state.sf)) &&
     (!state.sb || r.s === state.sb));
-  const tC = filtered.reduce((s, r) => s + r.ciro, 0);
+
+  // Totals - NET based
+  const tN = filtered.reduce((s, r) => s + r.net, 0);
   const tD = filtered.reduce((s, r) => s + r.d, 0);
-  const tA = tD > 0 ? tC / tD : 0;
-  const lC = lastD.reduce((s, r) => s + r.ciro, 0);
+  const tA = tD > 0 ? tN / tD : 0; // net per demet
+  const lN = lastD.reduce((s, r) => s + r.net, 0);
   const lDm = lastD.reduce((s, r) => s + r.d, 0);
-  const lA = lDm > 0 ? lC / lDm : 0;
-  return { tC, tD, tA, lC, lD: lDm, lA, cCh: lC > 0 ? ((tC - lC) / lC * 100) : null, pCh: lA > 0 ? ((tA - lA) / lA * 100) : null, has: lastD.length > 0 };
+  const lA = lDm > 0 ? lN / lDm : 0;
+
+  // Per flower comparison
+  const flowerMap = {};
+  filtered.forEach(r => {
+    if (!flowerMap[r.c]) flowerMap[r.c] = { thisNet: 0, thisD: 0, lastNet: 0, lastD: 0 };
+    flowerMap[r.c].thisNet += r.net;
+    flowerMap[r.c].thisD += r.d;
+  });
+  lastD.forEach(r => {
+    if (!flowerMap[r.c]) flowerMap[r.c] = { thisNet: 0, thisD: 0, lastNet: 0, lastD: 0 };
+    flowerMap[r.c].lastNet += r.net;
+    flowerMap[r.c].lastD += r.d;
+  });
+  const flowers = Object.entries(flowerMap).map(([name, v]) => ({
+    name,
+    thisNet: v.thisNet, thisD: v.thisD,
+    thisDbn: v.thisD > 0 ? v.thisNet / v.thisD : 0,
+    lastNet: v.lastNet, lastD: v.lastD,
+    lastDbn: v.lastD > 0 ? v.lastNet / v.lastD : 0,
+    dbnDiff: (v.thisD > 0 ? v.thisNet / v.thisD : 0) - (v.lastD > 0 ? v.lastNet / v.lastD : 0),
+    dbnPct: (v.lastD > 0 && v.thisD > 0) ? (((v.thisNet / v.thisD) - (v.lastNet / v.lastD)) / (v.lastNet / v.lastD) * 100) : null,
+    demetDiff: v.thisD - v.lastD,
+  })).sort((a, b) => Math.abs(b.dbnDiff) - Math.abs(a.dbnDiff));
+
+  // Per branch comparison
+  const branchMap = {};
+  filtered.forEach(r => {
+    if (!branchMap[r.s]) branchMap[r.s] = { thisNet: 0, thisD: 0, lastNet: 0, lastD: 0 };
+    branchMap[r.s].thisNet += r.net;
+    branchMap[r.s].thisD += r.d;
+  });
+  lastD.forEach(r => {
+    if (!branchMap[r.s]) branchMap[r.s] = { thisNet: 0, thisD: 0, lastNet: 0, lastD: 0 };
+    branchMap[r.s].lastNet += r.net;
+    branchMap[r.s].lastD += r.d;
+  });
+  const branches = Object.entries(branchMap).map(([name, v]) => ({
+    name,
+    thisNet: v.thisNet, thisD: v.thisD,
+    lastNet: v.lastNet, lastD: v.lastD,
+    netDiff: v.thisNet - v.lastNet,
+    netPct: v.lastNet > 0 ? ((v.thisNet - v.lastNet) / v.lastNet * 100) : null,
+  })).sort((a, b) => b.thisNet - a.thisNet);
+
+  return {
+    tN, tD, tA, lN, lD: lDm, lA,
+    nCh: lN > 0 ? ((tN - lN) / lN * 100) : null,
+    pCh: lA > 0 ? ((tA - lA) / lA * 100) : null,
+    has: lastD.length > 0,
+    flowers, branches
+  };
 }
 
 // ═══════════════ RENDER ═══════════════
@@ -510,10 +562,6 @@ function render() {
       html += `<div class="card" style="margin-bottom:6px;padding:12px 14px"><div style="display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:13px;font-weight:600;color:#f8fafc">${esc(b.name)}</div><div style="font-size:10px;color:#64748b">${b.d}dm · ${fmt2(b.avgP)}</div></div><div style="text-align:right"><div style="font-size:13px;font-weight:700;color:#34d399">${fmt(b.net)}</div></div></div><div class="bar-bg"><div class="bar-fill" style="width:${w}%"></div></div></div>`;
     });
     if (stats.byB.length > 5) html += `<button class="show-more" onclick="toggleExp('branches')">${state.expanded.branches?'Daha az ▲':'Tüm şubeler ('+stats.byB.length+') ▼'}</button>`;
-
-    // TEMP DEBUG
-    html += `<div class="sec-title" style="margin-top:30px">🔧 Veri Kontrolü (geçici)</div>`;
-    html += `<div class="card" style="font-size:10px;color:#94a3b8;line-height:1.8;word-break:break-all;white-space:pre-wrap">${esc(DEBUG_INFO)}</div>`;
   }
 
   // ══ KARŞILAŞTIR ══
@@ -579,12 +627,98 @@ function render() {
     if (!y.has) {
       html += `<div class="card" style="background:rgba(250,204,21,0.06);border-color:rgba(250,204,21,0.12);text-align:center;padding:30px"><div style="font-size:14px;color:#fbbf24;margin-bottom:6px">Geçen yıl verisi yok</div><div style="font-size:12px;color:#94a3b8">Tarih aralığını "7 Gün" veya "Bu Ay" olarak değiştirip tekrar dene.</div></div>`;
     } else {
+      // Top KPIs - NET based
       html += `<div class="grid-2" style="margin-bottom:14px">`;
-      html += `<div class="card"><div style="font-size:10px;color:#64748b;margin-bottom:4px">2025</div><div style="font-size:18px;font-weight:800;color:#94a3b8">${fmt(y.lC)}</div><div style="font-size:10px;color:#475569;margin-top:3px">${y.lD}dm · ${fmt(y.lA)} ort</div></div>`;
-      html += `<div class="card card-green"><div style="font-size:10px;color:#64748b;margin-bottom:4px">2026</div><div style="font-size:18px;font-weight:800;color:#4ade80">${fmt(y.tC)}</div><div style="font-size:10px;color:#475569;margin-top:3px">${y.tD}dm · ${fmt(y.tA)} ort</div></div>`;
+      html += `<div class="card"><div style="font-size:10px;color:#64748b;margin-bottom:4px">2025 Net Gelir</div><div style="font-size:18px;font-weight:800;color:#94a3b8">${fmt(y.lN)}</div><div style="font-size:10px;color:#475569;margin-top:3px">${y.lD} demet · ${fmt(y.lA)} dm başı</div></div>`;
+      html += `<div class="card card-green"><div style="font-size:10px;color:#64748b;margin-bottom:4px">2026 Net Gelir</div><div style="font-size:18px;font-weight:800;color:#4ade80">${fmt(y.tN)}</div><div style="font-size:10px;color:#475569;margin-top:3px">${y.tD} demet · ${fmt(y.tA)} dm başı</div></div>`;
       html += `</div>`;
-      html += `<div class="card" style="text-align:center;margin-bottom:14px"><div style="display:flex;justify-content:center;gap:30px"><div><div style="font-size:10px;color:#94a3b8">Ciro</div><div style="font-size:20px;font-weight:800;margin-top:4px">${trendHTML(y.cCh)}</div></div><div><div style="font-size:10px;color:#94a3b8">Ort. Fiyat</div><div style="font-size:20px;font-weight:800;margin-top:4px">${trendHTML(y.pCh)}</div></div></div></div>`;
-      html += `<div class="card" style="background:rgba(96,165,250,0.06);border-color:rgba(96,165,250,0.12)"><div style="font-size:12px;font-weight:600;color:#60a5fa;margin-bottom:6px">📊 Yorum</div><div style="font-size:13px;color:#cbd5e1;line-height:1.5">${y.cCh>0?'Bu dönem geçen yıla göre %'+y.cCh.toFixed(0)+' daha fazla ciro.':'Ciro %'+Math.abs(y.cCh).toFixed(0)+' geride.'}${y.pCh!=null?(y.pCh>0?' Fiyatlar %'+y.pCh.toFixed(0)+' artmış.':' Fiyatlar %'+Math.abs(y.pCh).toFixed(0)+' düşmüş.'):''}</div></div>`;
+
+      // Change summary
+      html += `<div class="card" style="text-align:center;margin-bottom:14px"><div style="display:flex;justify-content:center;gap:30px"><div><div style="font-size:10px;color:#94a3b8">Net Gelir</div><div style="font-size:20px;font-weight:800;margin-top:4px">${trendHTML(y.nCh)}</div></div><div><div style="font-size:10px;color:#94a3b8">Dm Başı Net</div><div style="font-size:20px;font-weight:800;margin-top:4px">${trendHTML(y.pCh)}</div></div><div><div style="font-size:10px;color:#94a3b8">Demet</div><div style="font-size:20px;font-weight:800;margin-top:4px">${trendHTML(y.lD > 0 ? ((y.tD - y.lD) / y.lD * 100) : null)}</div></div></div></div>`;
+
+      // Flower comparison
+      html += `<div class="sec-title">Çiçek Bazlı Karşılaştırma</div>`;
+      const flShow = state.expanded.yoyFlowers ? 999 : 6;
+      y.flowers.slice(0, flShow).forEach(f => {
+        const hasBoth = f.thisD > 0 && f.lastD > 0;
+        const diffColor = f.dbnDiff > 0 ? "#34d399" : f.dbnDiff < 0 ? "#f87171" : "#64748b";
+        const diffSign = f.dbnDiff > 0 ? "+" : "";
+
+        html += `<div class="card" style="margin-bottom:8px;padding:12px 14px">`;
+        html += `<div style="font-size:13px;font-weight:600;color:#f8fafc;margin-bottom:8px">${esc(f.name)}</div>`;
+
+        // Demet row
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0">`;
+        html += `<div style="font-size:10px;color:#64748b;width:70px">Demet</div>`;
+        html += `<div style="font-size:12px;color:#94a3b8;width:60px;text-align:center">${f.lastD || "—"}</div>`;
+        html += `<div style="font-size:10px;color:#475569">→</div>`;
+        html += `<div style="font-size:12px;color:#e2e8f0;font-weight:600;width:60px;text-align:center">${f.thisD || "—"}</div>`;
+        html += `<div style="font-size:11px;color:${f.demetDiff > 0 ? '#34d399' : f.demetDiff < 0 ? '#f87171' : '#64748b'};width:60px;text-align:right;font-weight:600">${f.demetDiff > 0 ? '+' : ''}${f.demetDiff}</div>`;
+        html += `</div>`;
+
+        // Dm başı net row
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0">`;
+        html += `<div style="font-size:10px;color:#64748b;width:70px">Dm Başı Net</div>`;
+        html += `<div style="font-size:12px;color:#94a3b8;width:60px;text-align:center">${f.lastD > 0 ? fmt(f.lastDbn) : "—"}</div>`;
+        html += `<div style="font-size:10px;color:#475569">→</div>`;
+        html += `<div style="font-size:12px;color:#e2e8f0;font-weight:600;width:60px;text-align:center">${f.thisD > 0 ? fmt(f.thisDbn) : "—"}</div>`;
+        html += `<div style="font-size:11px;color:${diffColor};width:60px;text-align:right;font-weight:600">${hasBoth ? diffSign + fmt(f.dbnDiff) : "—"}</div>`;
+        html += `</div>`;
+
+        // Net gelir row
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0">`;
+        html += `<div style="font-size:10px;color:#64748b;width:70px">Net Gelir</div>`;
+        html += `<div style="font-size:12px;color:#94a3b8;width:60px;text-align:center">${f.lastNet > 0 ? fmt(f.lastNet) : "—"}</div>`;
+        html += `<div style="font-size:10px;color:#475569">→</div>`;
+        html += `<div style="font-size:12px;color:#e2e8f0;font-weight:600;width:60px;text-align:center">${f.thisNet > 0 ? fmt(f.thisNet) : "—"}</div>`;
+        const netDiff = f.thisNet - f.lastNet;
+        html += `<div style="font-size:11px;color:${netDiff > 0 ? '#34d399' : netDiff < 0 ? '#f87171' : '#64748b'};width:60px;text-align:right;font-weight:600">${hasBoth ? (netDiff > 0 ? '+' : '') + fmt(netDiff) : "—"}</div>`;
+        html += `</div>`;
+
+        // Percentage badge
+        if (f.dbnPct != null) {
+          html += `<div style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.04)">`;
+          html += `<span style="font-size:11px;padding:3px 8px;border-radius:6px;background:${f.dbnPct > 0 ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)'};color:${f.dbnPct > 0 ? '#34d399' : '#f87171'}">${f.dbnPct > 0 ? '▲' : '▼'} Dm başı net %${Math.abs(f.dbnPct).toFixed(1)} ${f.dbnPct > 0 ? 'artmış' : 'düşmüş'}</span>`;
+          html += `</div>`;
+        }
+        html += `</div>`;
+      });
+      if (y.flowers.length > 6) html += `<button class="show-more" onclick="toggleExp('yoyFlowers')">${state.expanded.yoyFlowers ? 'Daha az ▲' : 'Tüm çiçekler (' + y.flowers.length + ') ▼'}</button>`;
+
+      // Branch comparison
+      html += `<div class="sec-title">Şube Bazlı Karşılaştırma</div>`;
+      const brShow = state.expanded.yoyBranches ? 999 : 5;
+      y.branches.slice(0, brShow).forEach(b => {
+        const hasBoth = b.thisNet > 0 && b.lastNet > 0;
+        html += `<div class="card" style="margin-bottom:8px;padding:12px 14px">`;
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">`;
+        html += `<div style="font-size:13px;font-weight:600;color:#f8fafc">${esc(b.name)}</div>`;
+        if (b.netPct != null) html += `<span style="font-size:11px;color:${b.netPct > 0 ? '#34d399' : '#f87171'};font-weight:600">${b.netPct > 0 ? '▲ +' : '▼ '}${Math.abs(b.netPct).toFixed(0)}%</span>`;
+        html += `</div>`;
+        html += `<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0">`;
+        html += `<span style="color:#64748b">Net Gelir</span>`;
+        html += `<span style="color:#94a3b8">${b.lastNet > 0 ? fmt(b.lastNet) : '—'}</span>`;
+        html += `<span style="color:#475569">→</span>`;
+        html += `<span style="color:#e2e8f0;font-weight:600">${b.thisNet > 0 ? fmt(b.thisNet) : '—'}</span>`;
+        html += `</div>`;
+        html += `<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0">`;
+        html += `<span style="color:#64748b">Demet</span>`;
+        html += `<span style="color:#94a3b8">${b.lastD || '—'}</span>`;
+        html += `<span style="color:#475569">→</span>`;
+        html += `<span style="color:#e2e8f0;font-weight:600">${b.thisD || '—'}</span>`;
+        html += `</div>`;
+        html += `</div>`;
+      });
+      if (y.branches.length > 5) html += `<button class="show-more" onclick="toggleExp('yoyBranches')">${state.expanded.yoyBranches ? 'Daha az ▲' : 'Tüm şubeler (' + y.branches.length + ') ▼'}</button>`;
+
+      // Summary insight
+      const topGainer = y.flowers.filter(f => f.dbnPct != null && f.dbnPct > 0).sort((a, b) => b.dbnPct - a.dbnPct)[0];
+      const topLoser = y.flowers.filter(f => f.dbnPct != null && f.dbnPct < 0).sort((a, b) => a.dbnPct - b.dbnPct)[0];
+      html += `<div class="card" style="background:rgba(96,165,250,0.06);border-color:rgba(96,165,250,0.12);margin-top:14px"><div style="font-size:12px;font-weight:600;color:#60a5fa;margin-bottom:6px">📊 Özet Yorum</div><div style="font-size:13px;color:#cbd5e1;line-height:1.6">`;
+      html += y.nCh > 0 ? 'Geçen yıla göre net gelir %' + y.nCh.toFixed(0) + ' artmış. ' : 'Net gelir %' + Math.abs(y.nCh).toFixed(0) + ' geride. ';
+      if (topGainer) html += 'En çok yükselen: ' + esc(topGainer.name) + ' (+%' + topGainer.dbnPct.toFixed(0) + ' dm başı). ';
+      if (topLoser) html += 'En çok düşen: ' + esc(topLoser.name) + ' (-%' + Math.abs(topLoser.dbnPct).toFixed(0) + ' dm başı).';
+      html += `</div></div>`;
     }
   }
 
