@@ -1218,10 +1218,15 @@ async function handleAI() {
   try {
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "anthropic-dangerous-direct-browser-access": "true" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": "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",
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true"
+      },
       body: JSON.stringify({
         model: "claude-sonnet-4-20250514", max_tokens: 1000,
-        system: "Sen çiçek mezat analisti. Türkçe, kısa, aksiyon odaklı cevap ver. Gider %20.\n" + ctx,
+        system: "Sen bir çiçek mezat analisti ve danışmanısın. Kullanıcı Yalova'da çiçek üreticisi — Flora mezatına (Hollanda tipi açık artırma) çiçek gönderiyor. Türkçe cevap ver. Kısa, net ve aksiyon odaklı ol. Sayıları ve TL değerlerini kullan. Somut önerilerde bulun. Gider oranı %20 sabit.\n\nVERİLER:\n" + ctx,
         messages: [{ role: "user", content: q }]
       })
     });
