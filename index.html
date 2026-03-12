@@ -269,7 +269,8 @@ let state = {
   hmSort: "net",
   expanded: {},
   aiQ: "", aiH: [], aiL: false,
-  ddOpen: null
+  ddOpen: null,
+  chartOpen: null // "flower:NAME" or "branch:NAME"
 };
 
 function setState(updates) {
@@ -453,6 +454,96 @@ function getYoY(filtered) {
 }
 
 // ═══════════════ RENDER ═══════════════
+// ═══════════════ LINE CHART ═══════════════
+function buildLineChart(key, type) {
+  // key = flower name or branch name, type = "c" for flower, "s" for branch
+  const data = getFiltered().filter(r => r[type] === key);
+  if (!data.length) return "";
+
+  // Group by date
+  const byDate = {};
+  data.forEach(r => {
+    if (!byDate[r.t]) byDate[r.t] = { net: 0, d: 0 };
+    byDate[r.t].net += r.net;
+    byDate[r.t].d += r.d;
+  });
+  const points = Object.entries(byDate)
+    .map(([date, v]) => ({ date, dbn: v.d > 0 ? v.net / v.d : 0, d: v.d }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  if (points.length < 2) {
+    return `<div style="padding:12px 0;font-size:11px;color:#64748b;text-align:center">Grafik için en az 2 günlük veri gerekli</div>`;
+  }
+
+  const W = 320, H = 100, PX = 30, PY = 10;
+  const chartW = W - PX * 2, chartH = H - PY * 2;
+  const vals = points.map(p => p.dbn);
+  const minV = Math.min(...vals) * 0.95;
+  const maxV = Math.max(...vals) * 1.05;
+  const range = maxV - minV || 1;
+
+  const getX = i => PX + (i / (points.length - 1)) * chartW;
+  const getY = v => PY + chartH - ((v - minV) / range) * chartH;
+
+  // Build SVG path
+  let pathD = "";
+  let areaD = "";
+  const dots = [];
+  points.forEach((p, i) => {
+    const x = getX(i);
+    const y = getY(p.dbn);
+    if (i === 0) { pathD += `M ${x} ${y}`; areaD += `M ${x} ${H - PY}`; }
+    else pathD += ` L ${x} ${y}`;
+    areaD += ` L ${x} ${y}`;
+    dots.push({ x, y, dbn: p.dbn, date: p.date, d: p.d });
+  });
+  areaD += ` L ${getX(points.length - 1)} ${H - PY} Z`;
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;margin-top:8px">`;
+  // Area fill
+  svg += `<path d="${areaD}" fill="url(#chartGrad)" opacity="0.3"/>`;
+  svg += `<defs><linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#22c55e"/><stop offset="100%" stop-color="#22c55e" stop-opacity="0"/></linearGradient></defs>`;
+  // Grid lines
+  for (let i = 0; i <= 3; i++) {
+    const y = PY + (i / 3) * chartH;
+    const val = maxV - (i / 3) * range;
+    svg += `<line x1="${PX}" y1="${y}" x2="${W - PX}" y2="${y}" stroke="rgba(255,255,255,0.05)" stroke-width="0.5"/>`;
+    svg += `<text x="${PX - 4}" y="${y + 3}" fill="#475569" font-size="7" text-anchor="end">${Math.round(val)}</text>`;
+  }
+  // Line
+  svg += `<path d="${pathD}" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
+  // Dots + labels
+  dots.forEach((d, i) => {
+    svg += `<circle cx="${d.x}" cy="${d.y}" r="3" fill="#22c55e" stroke="#0b0e18" stroke-width="1.5"/>`;
+    // Date labels (show first, last, and middle)
+    if (i === 0 || i === dots.length - 1 || (dots.length > 4 && i === Math.floor(dots.length / 2))) {
+      svg += `<text x="${d.x}" y="${H - 2}" fill="#475569" font-size="7" text-anchor="middle">${fD(d.date)}</text>`;
+    }
+    // Value on first and last
+    if (i === 0 || i === dots.length - 1) {
+      svg += `<text x="${d.x}" y="${d.y - 6}" fill="#34d399" font-size="8" font-weight="600" text-anchor="middle">${Math.round(d.dbn)}₺</text>`;
+    }
+  });
+  svg += `</svg>`;
+
+  // Summary below chart
+  const first = points[0], last = points[points.length - 1];
+  const change = first.dbn > 0 ? ((last.dbn - first.dbn) / first.dbn * 100) : 0;
+  const totalD = points.reduce((s, p) => s + p.d, 0);
+
+  let summary = `<div style="display:flex;justify-content:space-between;padding:6px 0 0;font-size:11px">`;
+  summary += `<span style="color:#64748b">${points.length} gün · ${totalD} demet</span>`;
+  summary += `<span style="color:${change > 0 ? '#34d399' : change < 0 ? '#f87171' : '#64748b'};font-weight:600">${change > 0 ? '▲ +' : '▼ '}${Math.abs(change).toFixed(1)}% dm başı net</span>`;
+  summary += `</div>`;
+
+  return svg + summary;
+}
+
+function toggleChart(type, name) {
+  const key = type + ":" + name;
+  setState({ chartOpen: state.chartOpen === key ? null : key });
+}
+
 function render() {
   const filtered = getFiltered();
   const stats = calcStats(filtered);
@@ -551,7 +642,16 @@ function render() {
     stats.byF.slice(0, flowerShow).forEach((f, i) => {
       const colors = ["#fbbf24","#cbd5e1","#c49a6c"];
       const bgs = ["rgba(250,204,21,0.15)","rgba(192,192,192,0.12)","rgba(205,127,50,0.12)"];
-      html += `<div class="card rank-item" style="margin-bottom:6px;padding:12px 14px"><div style="display:flex;align-items:center;gap:8px"><div class="rank-num" style="background:${i<3?bgs[i]:'rgba(255,255,255,0.04)'};color:${i<3?colors[i]:'#64748b'}">${i+1}</div><div><div style="font-size:12px;font-weight:600;color:#f8fafc">${esc(f.name)}</div><div style="font-size:10px;color:#64748b">${f.d}dm · ${fmt(f.avgP)}</div></div></div><div style="text-align:right"><div style="font-size:14px;font-weight:700;color:#34d399">${fmt(f.dbn)}</div><div style="font-size:9px;color:#64748b">dm başı net</div></div></div>`;
+      const isChartOpen = state.chartOpen === "flower:" + f.name;
+      const borderStyle = isChartOpen ? "border-color:rgba(34,197,94,0.2)" : "";
+      html += `<div class="card" style="margin-bottom:6px;padding:12px 14px;cursor:pointer;${borderStyle}" onclick="toggleChart('flower','${esc(f.name)}')">`;
+      html += `<div class="rank-item"><div style="display:flex;align-items:center;gap:8px"><div class="rank-num" style="background:${i<3?bgs[i]:'rgba(255,255,255,0.04)'};color:${i<3?colors[i]:'#64748b'}">${i+1}</div><div><div style="font-size:12px;font-weight:600;color:#f8fafc">${esc(f.name)}</div><div style="font-size:10px;color:#64748b">${f.d}dm · ${fmt(f.avgP)}</div></div></div><div style="text-align:right;display:flex;align-items:center;gap:6px"><div><div style="font-size:14px;font-weight:700;color:#34d399">${fmt(f.dbn)}</div><div style="font-size:9px;color:#64748b">dm başı net</div></div><div style="font-size:10px;color:#475569">${isChartOpen?'▲':'▼'}</div></div></div>`;
+      if (isChartOpen) {
+        html += `<div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">`;
+        html += buildLineChart(f.name, "c");
+        html += `</div>`;
+      }
+      html += `</div>`;
     });
     if (stats.byF.length > 6) html += `<button class="show-more" onclick="toggleExp('flowers')">${state.expanded.flowers?'Daha az ▲':'Tümü ('+stats.byF.length+') ▼'}</button>`;
 
@@ -559,7 +659,17 @@ function render() {
     const brShow = state.expanded.branches ? 999 : 5;
     stats.byB.slice(0, brShow).forEach((b, i) => {
       const w = stats.byB[0]?.net > 0 ? (b.net / stats.byB[0].net) * 100 : 0;
-      html += `<div class="card" style="margin-bottom:6px;padding:12px 14px"><div style="display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:13px;font-weight:600;color:#f8fafc">${esc(b.name)}</div><div style="font-size:10px;color:#64748b">${b.d}dm · ${fmt2(b.avgP)}</div></div><div style="text-align:right"><div style="font-size:13px;font-weight:700;color:#34d399">${fmt(b.net)}</div></div></div><div class="bar-bg"><div class="bar-fill" style="width:${w}%"></div></div></div>`;
+      const isChartOpen = state.chartOpen === "branch:" + b.name;
+      const borderStyle = isChartOpen ? "border-color:rgba(34,197,94,0.2)" : "";
+      html += `<div class="card" style="margin-bottom:6px;padding:12px 14px;cursor:pointer;${borderStyle}" onclick="toggleChart('branch','${esc(b.name)}')">`;
+      html += `<div style="display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:13px;font-weight:600;color:#f8fafc">${esc(b.name)}</div><div style="font-size:10px;color:#64748b">${b.d}dm · ${fmt2(b.avgP)}</div></div><div style="text-align:right;display:flex;align-items:center;gap:6px"><div style="font-size:13px;font-weight:700;color:#34d399">${fmt(b.net)}</div><div style="font-size:10px;color:#475569">${isChartOpen?'▲':'▼'}</div></div></div>`;
+      html += `<div class="bar-bg"><div class="bar-fill" style="width:${w}%"></div></div>`;
+      if (isChartOpen) {
+        html += `<div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">`;
+        html += buildLineChart(b.name, "s");
+        html += `</div>`;
+      }
+      html += `</div>`;
     });
     if (stats.byB.length > 5) html += `<button class="show-more" onclick="toggleExp('branches')">${state.expanded.branches?'Daha az ▲':'Tüm şubeler ('+stats.byB.length+') ▼'}</button>`;
   }
