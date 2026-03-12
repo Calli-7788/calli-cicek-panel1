@@ -554,7 +554,7 @@ function render() {
   let html = "";
 
   // Header
-  html += `<div class="header"><div class="header-row"><div><div style="font-size:10px;letter-spacing:2px;color:#475569;text-transform:uppercase">Çallı Çiçek</div><div style="font-size:19px;font-weight:700;color:#f8fafc">Üretici Paneli</div></div><div class="logo">🌸</div></div></div>`;
+  html += `<div class="header"><div class="header-row"><div><div style="font-size:10px;letter-spacing:2px;color:#475569;text-transform:uppercase">Çallı Çiçek</div><div style="font-size:19px;font-weight:700;color:#f8fafc">Üretici Paneli</div></div><div style="display:flex;align-items:center;gap:8px"><button onclick="refreshData()" style="width:32px;height:32px;border-radius:8px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.04);color:#94a3b8;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center" title="Verileri yenile">↻</button><div class="logo">🌸</div></div></div></div>`;
 
   // Alerts
   if (alerts.length > 0 && state.tab === "panel") {
@@ -1008,26 +1008,33 @@ function render() {
   if (state.tab === "ai") {
     html += `<div class="sec-title">AI Çiçek Danışmanı</div>`;
     html += `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:14px">`;
-    ["En kârlı 5 kombo?","Hangi şubeye göndermeli?","Bu dönemi özetle","Fiyat trendi?","Geçen yıla göre?"].forEach(q => {
+    ["En kârlı 5 kombo?","Hangi şubeye göndermeli?","Bu dönemi özetle","Fiyat trendi?","Geçen yıla göre?","Hangi günler en iyi fiyat?","Ne artırmalıyım?","En kötü performans?"].forEach(q => {
       html += `<button class="ai-chip" onclick="setAIQ('${q}')">${q}</button>`;
     });
     html += `</div>`;
-    html += `<div style="margin-bottom:14px;max-height:380px;overflow-y:auto">`;
+    html += `<div id="aiChat" style="margin-bottom:14px;max-height:450px;overflow-y:auto">`;
     state.aiH.forEach(m => {
-      html += `<div class="ai-msg ${m.r==='u'?'ai-msg-user':'ai-msg-ai'}"><div style="font-size:9px;color:${m.r==='u'?'#a78bfa':'#34d399'};margin-bottom:3px;font-weight:600">${m.r==='u'?'Sen':'✦ AI Uzman'}</div><div style="font-size:12px;color:#e2e8f0;line-height:1.6;white-space:pre-wrap">${esc(m.t)}</div></div>`;
+      // Simple markdown: **bold** → <strong>, \n → <br>
+      let msgHTML = esc(m.t).replace(/\*\*(.*?)\*\*/g, '<strong style="color:#f8fafc">$1</strong>').replace(/\n/g, '<br>');
+      html += `<div class="ai-msg ${m.r==='u'?'ai-msg-user':'ai-msg-ai'}"><div style="font-size:9px;color:${m.r==='u'?'#a78bfa':'#34d399'};margin-bottom:3px;font-weight:600">${m.r==='u'?'Sen':'✦ AI Uzman'}</div><div style="font-size:12px;color:#e2e8f0;line-height:1.6">${msgHTML}</div></div>`;
     });
     if (state.aiL) html += `<div class="ai-msg ai-msg-ai"><div style="color:#64748b;font-size:12px">Analiz ediliyor...</div></div>`;
     html += `</div>`;
-    html += `<div style="display:flex;gap:8px"><input class="ai-input" id="aiInput" value="${esc(state.aiQ)}" placeholder="Sor: Lisyantus'u nereye göndermeli?" onkeydown="if(event.key==='Enter')handleAI()"><button class="ai-send" style="background:${state.aiQ.trim()?'linear-gradient(135deg,#7c3aed,#6d28d9)':'rgba(255,255,255,0.06)'};color:${state.aiQ.trim()?'#fff':'#475569'}" onclick="handleAI()">Sor</button></div>`;
+    html += `<div style="display:flex;gap:8px;position:sticky;bottom:0;padding:8px 0;background:#0b0e18"><input class="ai-input" id="aiInput" value="${esc(state.aiQ)}" placeholder="Sor: Lisyantus'u nereye göndermeli?" onkeydown="if(event.key==='Enter')handleAI()"><button class="ai-send" style="background:${state.aiQ.trim()?'linear-gradient(135deg,#7c3aed,#6d28d9)':'rgba(255,255,255,0.06)'};color:${state.aiQ.trim()?'#fff':'#475569'}" onclick="handleAI()">Sor</button></div>`;
+    // Clear chat button
+    if (state.aiH.length > 0) html += `<button onclick="state.aiH=[];render()" style="width:100%;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:#475569;font-size:10px;cursor:pointer;margin-top:4px">Sohbeti temizle</button>`;
   }
 
   html += `</div>`;
   document.getElementById("app").innerHTML = html;
 
-  // Restore AI input focus
+  // Restore AI input focus and scroll to bottom
   if (state.tab === "ai") {
     const inp = document.getElementById("aiInput");
     if (inp) inp.addEventListener("input", e => state.aiQ = e.target.value);
+    // Scroll chat to bottom
+    const chat = document.getElementById("aiChat");
+    if (chat) chat.scrollTop = chat.scrollHeight;
   }
 }
 
@@ -1069,6 +1076,12 @@ function renderDropdown(label, value, stateKey, grouped) {
 }
 
 // ═══════════════ ACTIONS ═══════════════
+async function refreshData() {
+  document.getElementById("app").innerHTML = '<div class="loading-screen"><div class="spinner"></div><div style="font-size:14px;margin-bottom:6px">Veriler yenileniyor...</div></div>';
+  await loadAllData();
+  render();
+}
+
 function setPreset(p) {
   const today = new Date().toISOString().split("T")[0];
   const year = today.substring(0, 4);
@@ -1210,10 +1223,27 @@ async function handleAI() {
   const yoy = getYoY(filtered);
 
   const ctx = "VERİ (" + fD(state.sd) + "-" + fD(state.ed) + "): Ciro:" + fmt(stats.tc) + ", Net:" + fmt(stats.tn) + ", " + stats.td + "dm, Ort:" + fmt2(stats.av) +
-    "\nÇiçek(dbn): " + stats.byF.slice(0, 10).map(f => f.name + ":" + fmt(f.dbn) + "/dm," + f.d + "dm").join("; ") +
-    "\nŞube: " + stats.byB.slice(0, 10).map(b => b.name + ":" + fmt(b.avgP) + "," + fmt(b.net) + "net").join("; ") +
-    "\nTopKombo: " + hd.slice(0, 10).map(h => h.cicek + "→" + h.sube + ":" + fmt(h.dbn) + "/dm").join("; ") +
-    "\nGeçenYıl: " + (yoy.has ? "2025:" + fmt(yoy.lC) + ",2026:" + fmt(yoy.tC) : "veri yok");
+    "\nÇiçek(dbn sıralı): " + stats.byF.slice(0, 12).map(f => f.name + ":" + fmt(f.dbn) + "/dm," + f.d + "dm," + fmt(f.net) + "net").join("; ") +
+    "\nŞube(net sıralı): " + stats.byB.slice(0, 12).map(b => b.name + ":" + fmt(b.net) + "net," + b.d + "dm," + fmt(b.dbn) + "/dm").join("; ") +
+    "\nTopKombo(dbn sıralı): " + hd.slice(0, 12).map(h => h.cicek + "→" + h.sube + ":" + fmt(h.dbn) + "/dm," + h.d + "dm").join("; ") +
+    "\nGünlük: " + stats.dl.map(d => fD(d.date) + "(" + ["Paz","Pzt","Sal","Çar","Per","Cum","Cmt"][new Date(d.date+"T00:00:00").getDay()] + "):" + fmt(d.avgP) + "ort," + d.d + "dm," + fmt(d.net) + "net").join("; ") +
+    (function(){
+      // Per-flower daily breakdown for top 5 flowers
+      var detail = "";
+      stats.byF.slice(0,5).forEach(function(f){
+        var dayMap = {};
+        filtered.filter(function(r){return r.c===f.name}).forEach(function(r){
+          if(!dayMap[r.t]) dayMap[r.t]={net:0,d:0};
+          dayMap[r.t].net+=r.net; dayMap[r.t].d+=r.d;
+        });
+        var days = Object.entries(dayMap).sort(function(a,b){return a[0].localeCompare(b[0])}).map(function(e){
+          return fD(e[0])+":"+fmt(e[1].d>0?e[1].net/e[1].d:0)+"/dm,"+e[1].d+"dm";
+        });
+        if(days.length>1) detail += "\n" + f.name + " günlük: " + days.join("; ");
+      });
+      return detail;
+    })() +
+    "\nGeçenYıl: " + (yoy.has ? "2025net:" + fmt(yoy.lN) + "," + yoy.lD + "dm,ort" + fmt(yoy.lA) + " → 2026net:" + fmt(yoy.tN) + "," + yoy.tD + "dm,ort" + fmt(yoy.tA) + " değişim:" + (yoy.nCh>0?"+":"") + (yoy.nCh?.toFixed(1)||"—") + "%" : "geçen yıl verisi yok");
 
   try {
     const systemPrompt = "Sen bir çiçek mezat analisti ve danışmanısın. Kullanıcı Yalova'da çiçek üreticisi — Flora mezatına (Hollanda tipi açık artırma) çiçek gönderiyor. Türkçe cevap ver. Kısa, net ve aksiyon odaklı ol. Sayıları ve TL değerlerini kullan. Somut önerilerde bulun. Gider oranı %20 sabit.\n\nVERİLER:\n" + ctx;
