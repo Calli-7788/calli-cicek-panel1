@@ -1243,7 +1243,54 @@ async function handleAI() {
       });
       return detail;
     })() +
-    "\nGeçenYıl: " + (yoy.has ? "2025net:" + fmt(yoy.lN) + "," + yoy.lD + "dm,ort" + fmt(yoy.lA) + " → 2026net:" + fmt(yoy.tN) + "," + yoy.tD + "dm,ort" + fmt(yoy.tA) + " değişim:" + (yoy.nCh>0?"+":"") + (yoy.nCh?.toFixed(1)||"—") + "%" : "geçen yıl verisi yok");
+    "\nGeçenYıl: " + (yoy.has ? "2025net:" + fmt(yoy.lN) + "," + yoy.lD + "dm,ort" + fmt(yoy.lA) + " → 2026net:" + fmt(yoy.tN) + "," + yoy.tD + "dm,ort" + fmt(yoy.tA) + " değişim:" + (yoy.nCh>0?"+":"") + (yoy.nCh?.toFixed(1)||"—") + "%" : "geçen yıl verisi yok") +
+    (function(){
+      // Detailed 2025 data
+      var data2025 = ALL_DATA.filter(function(r){ return r.t.startsWith("2025") });
+      if (data2025.length === 0) return "";
+      var detail = "\n\n=== 2025 DETAYLI VERİ ===";
+      // 2025 flower breakdown
+      var fm = {};
+      data2025.forEach(function(r){
+        if(!fm[r.c]) fm[r.c]={net:0,d:0};
+        fm[r.c].net+=r.net; fm[r.c].d+=r.d;
+      });
+      var fList = Object.entries(fm).map(function(e){return {name:e[0],net:e[1].net,d:e[1].d,dbn:e[1].d>0?e[1].net/e[1].d:0}}).sort(function(a,b){return b.dbn-a.dbn});
+      detail += "\n2025 Çiçek(dbn sıralı): " + fList.slice(0,12).map(function(f){return f.name+":"+fmt(f.dbn)+"/dm,"+f.d+"dm,"+fmt(f.net)+"net"}).join("; ");
+      // 2025 branch breakdown
+      var bm = {};
+      data2025.forEach(function(r){
+        if(!bm[r.s]) bm[r.s]={net:0,d:0};
+        bm[r.s].net+=r.net; bm[r.s].d+=r.d;
+      });
+      var bList = Object.entries(bm).map(function(e){return {name:e[0],net:e[1].net,d:e[1].d,dbn:e[1].d>0?e[1].net/e[1].d:0}}).sort(function(a,b){return b.net-a.net});
+      detail += "\n2025 Şube(net sıralı): " + bList.slice(0,12).map(function(b){return b.name+":"+fmt(b.net)+"net,"+b.d+"dm,"+fmt(b.dbn)+"/dm"}).join("; ");
+      // 2025 monthly breakdown
+      var mm = {};
+      data2025.forEach(function(r){
+        var m = r.t.substring(0,7);
+        if(!mm[m]) mm[m]={net:0,d:0};
+        mm[m].net+=r.net; mm[m].d+=r.d;
+      });
+      var mList = Object.entries(mm).sort(function(a,b){return a[0].localeCompare(b[0])}).map(function(e){return e[0]+":"+fmt(e[1].net)+"net,"+e[1].d+"dm,ort"+fmt(e[1].d>0?e[1].net/e[1].d:0)+"/dm"});
+      detail += "\n2025 Aylık: " + mList.join("; ");
+      // Per-flower YoY comparison
+      detail += "\nÇiçek YoY Karşılaştırma: ";
+      var now2026 = {};
+      filtered.forEach(function(r){if(!now2026[r.c])now2026[r.c]={net:0,d:0};now2026[r.c].net+=r.net;now2026[r.c].d+=r.d});
+      var compItems = [];
+      fList.forEach(function(f25){
+        var f26 = now2026[f25.name];
+        if(f26 && f26.d>0){
+          var dbn25 = f25.dbn;
+          var dbn26 = f26.net/f26.d;
+          var ch = dbn25>0?((dbn26-dbn25)/dbn25*100):0;
+          compItems.push(f25.name+": 2025="+fmt(dbn25)+"/dm → 2026="+fmt(dbn26)+"/dm ("+(ch>0?"+":"")+ch.toFixed(0)+"%)");
+        }
+      });
+      if(compItems.length>0) detail += compItems.slice(0,10).join("; ");
+      return detail;
+    })();
 
   try {
     const systemPrompt = "Sen bir çiçek mezat analisti ve danışmanısın. Kullanıcı Yalova'da çiçek üreticisi — Flora mezatına (Hollanda tipi açık artırma) çiçek gönderiyor. Türkçe cevap ver. Kısa, net ve aksiyon odaklı ol. Sayıları ve TL değerlerini kullan. Somut önerilerde bulun. Gider oranı %20 sabit.\n\nVERİLER:\n" + ctx;
