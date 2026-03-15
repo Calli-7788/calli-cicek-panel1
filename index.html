@@ -788,8 +788,62 @@ function render() {
       html += `<div style="font-size:13px;color:#e2e8f0;line-height:1.7">${resultHTML}</div>`;
       html += `</div>`;
 
-      // Copy plan button
-      html += `<button onclick="copyPlan()" style="width:100%;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,0.1);background:transparent;color:#94a3b8;font-size:12px;cursor:pointer;margin-top:8px">📋 Planı Kopyala</button>`;
+      // Action buttons
+      html += `<div style="display:flex;gap:8px;margin-top:8px">`;
+      html += `<button onclick="savePlan()" style="flex:1;padding:10px;border-radius:10px;border:none;background:rgba(168,85,247,0.2);color:#c4b5fd;font-size:12px;cursor:pointer;font-weight:600">💾 Planı Kaydet</button>`;
+      html += `<button onclick="copyPlan()" style="flex:1;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,0.1);background:transparent;color:#94a3b8;font-size:12px;cursor:pointer">📋 Kopyala</button>`;
+      html += `</div>`;
+    }
+
+    // Saved Plans & Comparison
+    var savedPlans = JSON.parse(localStorage.getItem("savedPlans") || "[]");
+    if (savedPlans.length > 0) {
+      html += `<div class="sec-title" style="margin-top:24px">📊 Kayıtlı Planlar ve Sonuçlar</div>`;
+      savedPlans.slice().reverse().slice(0, state.expanded.allPlans ? 999 : 3).forEach(function(plan, idx) {
+        var realIdx = savedPlans.length - 1 - idx;
+        // Check if we have actual data for that date
+        var actualData = ALL_DATA.filter(function(r){ return r.t === plan.date });
+        var hasActual = actualData.length > 0;
+
+        html += `<div class="card" style="margin-bottom:8px;padding:12px 14px">`;
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">`;
+        html += `<div><div style="font-size:13px;font-weight:600;color:#f8fafc">${fDF(plan.date)}</div>`;
+        html += `<div style="font-size:10px;color:#64748b">${plan.flowers.map(function(f){return f.name+":"+f.demet+"dm"}).join(", ")} · ${plan.strategy}</div></div>`;
+        html += `<button onclick="deletePlan(${realIdx})" style="background:none;border:none;color:#475569;font-size:12px;cursor:pointer">✕</button>`;
+        html += `</div>`;
+
+        if (plan.estimatedNet) {
+          html += `<div style="display:flex;gap:12px;padding:6px 0">`;
+          html += `<div><div style="font-size:9px;color:#64748b">Tahmini Net</div><div style="font-size:14px;font-weight:700;color:#a78bfa">${fmt(plan.estimatedNet)}</div></div>`;
+
+          if (hasActual) {
+            // Calculate actual results for the planned flowers
+            var actualNet = 0;
+            var actualDemet = 0;
+            plan.flowers.forEach(function(pf) {
+              var flowerActual = actualData.filter(function(r){ return r.c === pf.name });
+              actualNet += flowerActual.reduce(function(s,r){return s+r.net},0);
+              actualDemet += flowerActual.reduce(function(s,r){return s+r.d},0);
+            });
+            var diff = actualNet - plan.estimatedNet;
+            var diffPct = plan.estimatedNet > 0 ? (diff / plan.estimatedNet * 100) : 0;
+
+            html += `<div><div style="font-size:9px;color:#64748b">Gerçekleşen</div><div style="font-size:14px;font-weight:700;color:#4ade80">${fmt(actualNet)}</div></div>`;
+            html += `<div><div style="font-size:9px;color:#64748b">Fark</div><div style="font-size:14px;font-weight:700;color:${diff>=0?'#34d399':'#f87171'}">${diff>=0?'+':''}${fmt(diff)} (${diffPct>=0?'+':''}${diffPct.toFixed(0)}%)</div></div>`;
+          } else {
+            html += `<div><div style="font-size:9px;color:#64748b">Gerçekleşen</div><div style="font-size:12px;color:#475569">Henüz veri yok</div></div>`;
+          }
+          html += `</div>`;
+        }
+
+        // Toggle details
+        if (state.expanded["plan_"+realIdx]) {
+          html += `<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.04);font-size:11px;color:#94a3b8;white-space:pre-wrap;max-height:200px;overflow-y:auto">${esc(plan.result).substring(0,500)}${plan.result.length>500?'...':''}</div>`;
+        }
+        html += `<button onclick="toggleExp('plan_${realIdx}')" style="background:none;border:none;color:#475569;font-size:10px;cursor:pointer;padding-top:4px">${state.expanded["plan_"+realIdx]?'Detayı gizle ▲':'Detayı göster ▼'}</button>`;
+        html += `</div>`;
+      });
+      if (savedPlans.length > 3) html += `<button class="show-more" onclick="toggleExp('allPlans')">${state.expanded.allPlans?'Daha az ▲':'Tüm planlar ('+savedPlans.length+') ▼'}</button>`;
     }
   }
 
@@ -1191,6 +1245,44 @@ function copyPlan() {
   }
 }
 
+function savePlan() {
+  if (!state.planResult) return;
+  var savedPlans = JSON.parse(localStorage.getItem("savedPlans") || "[]");
+  // Try to extract estimated net from plan text
+  var estMatch = state.planResult.match(/net gelir[:\s]*([0-9.,]+)/i);
+  var estimatedNet = estMatch ? parseFloat(estMatch[1].replace(/\./g,"").replace(",",".")) : 0;
+  // If couldn't find, try another pattern
+  if (!estimatedNet) {
+    var estMatch2 = state.planResult.match(/(\d[\d.,]*)\s*₺/g);
+    if (estMatch2 && estMatch2.length > 0) {
+      var lastNum = estMatch2[estMatch2.length - 1];
+      estimatedNet = parseFloat(lastNum.replace(/[^\d.,]/g,"").replace(/\./g,"").replace(",",".")) || 0;
+    }
+  }
+
+  savedPlans.push({
+    date: new Date().toISOString().split("T")[0],
+    timestamp: Date.now(),
+    flowers: state.planFlowers.map(function(f){return {name:f.name,demet:f.demet}}),
+    boxSize: state.planBoxSize,
+    strategy: state.planStrategy,
+    result: state.planResult,
+    estimatedNet: estimatedNet
+  });
+  localStorage.setItem("savedPlans", JSON.stringify(savedPlans));
+  alert("Plan kaydedildi! Gerçekleşen sonuçlar veriye düştüğünde karşılaştırma otomatik görünecek.");
+  render();
+}
+
+function deletePlan(index) {
+  var savedPlans = JSON.parse(localStorage.getItem("savedPlans") || "[]");
+  if (confirm("Bu planı silmek istediğine emin misin?")) {
+    savedPlans.splice(index, 1);
+    localStorage.setItem("savedPlans", JSON.stringify(savedPlans));
+    render();
+  }
+}
+
 async function handlePlan() {
   if (state.planFlowers.length === 0 || state.planLoading) return;
   state.planLoading = true;
@@ -1253,38 +1345,53 @@ async function handlePlan() {
   });
 
   var strategyDesc = {
-    safe: "GÜVENLİ strateji: Kanıtlanmış, stabil fiyat veren şubelere öncelik ver. Risk alma. Geçmiş performansı yüksek olan yerlere gönder.",
-    aggressive: "AGRESİF strateji: En yüksek fiyatı veren şubelere ağırlık ver, düşük fiyatlı şubeleri tamamen atla. Kâr maksimizasyonu.",
-    balanced: "DENGELİ strateji: Kârlılık ve risk arasında denge kur. Ana şubelere ağırlık ver ama çeşitlendir.",
-    explore: "DENEME stratejisi: Az gönderim yapılan ama potansiyel görülen şubelere de kutu ayır. Yeni fırsatları keşfet."
+    safe: "GÜVENLİ strateji: En yüksek MUTLAK FİYATI veren şubelere öncelik ver. Kanıtlanmış, stabil performans. Risk alma.",
+    aggressive: "AGRESİF strateji: Fiyatı yükselen şubelere ağırlık ver — momentum yakala. Yüksek fiyatlı ama düşüşte olan şubelerden biraz çek.",
+    balanced: "DENGELİ strateji: Hem mutlak fiyatı hem trendi dengele. Yüksek fiyatlı şubeleri koru, yükselenlere de pay ayır.",
+    explore: "DENEME stratejisi: Ana şubeleri koru ama az gönderim yapılan potansiyelli şubelere 1-2 kutu ayır."
   };
+
+  var totalDemet = state.planFlowers.reduce(function(s,f){return s+f.demet},0);
+  var totalKutu = Math.ceil(totalDemet / state.planBoxSize);
 
   var planPrompt = "GÖREV: Çiçek gönderim planı oluştur.\n\n" +
     "KESİLEN ÇİÇEKLER:\n" + state.planFlowers.map(function(f){ return "- " + f.name + ": " + f.demet + " demet" }).join("\n") +
+    "\nTOPLAM: " + totalDemet + " demet, tahmini " + totalKutu + " kutu" +
     "\n\nKUTU BAŞINA DEMET: " + state.planBoxSize +
     "\n\nSTRATEJİ: " + strategyDesc[state.planStrategy] +
     "\n\nŞUBE TREND VERİLERİ (seçili dönem + son 14 gün trendi):" + trendInfo +
     "\n\nGEÇMİŞ PERFORMANS:\n" +
-    "Çiçek-Şube Kombinasyonları(dbn sıralı): " + hd.slice(0,20).map(function(h){return h.cicek+"→"+h.sube+":"+fmt(h.dbn)+"/dm,"+h.d+"dm"}).join("; ") +
-    "\n\nKURALLAR:\n" +
-    "- Her çiçek için toplam demet sayısı girilen miktara eşit olmalı\n" +
-    "- Kutu başına " + state.planBoxSize + " demet olacak şekilde tam kutular oluştur\n" +
-    "- Her şube için kaç kutu ve hangi çiçekten kaç demet gideceğini yaz\n" +
-    "- Neden o şubeyi seçtiğini kısa açıkla (fiyat trendi, geçmiş performans)\n" +
+    "Çiçek-Şube Kombinasyonları(dbn sıralı): " + hd.slice(0,25).map(function(h){return h.cicek+"→"+h.sube+":"+fmt(h.dbn)+"/dm,"+h.d+"dm"}).join("; ") +
+    "\n\n⚠ ÇOK ÖNEMLİ FİYATLANDIRMA KURALI:\n" +
+    "Karar verirken MUTLAK FİYAT her zaman TREND'den önemlidir!\n" +
+    "Örnek: Ayazağa 180₺/dm (düşüyor) vs Kadıköy 85₺/dm (yükseliyor) → Ayazağa HÂLÂ çok daha kârlı!\n" +
+    "Düşüyor diye yüksek fiyatlı şubeyi bırakma. Sadece düşüş ÇOOOK sert ise (%30+) azalt.\n" +
+    "Doğru yaklaşım: Fiyat × Hacim optimizasyonu yap. Yüksek fiyatlı şubeye ağırlık ver, trend de iyiyse bonus.\n\n" +
+    "KURALLAR:\n" +
+    "- Her çiçek için toplam demet sayısı girilen miktara EŞİT olmalı\n" +
+    "- Kutu başına " + state.planBoxSize + " demet\n" +
+    "- Bir kutuya FARKLI çiçekler karışık konulabilir\n" +
+    "- Aynı şubeye birden fazla kutu gidebilir\n" +
+    "- ÖNCE mutlak fiyata bak (yüksek fiyat = daha çok kutu), SONRA trende bak (yükseliş = ekstra kutu)\n" +
+    "- Her şube için neden seçtiğini VERİYE DAYANARAK açıkla (X₺/dm, trend)\n" +
     "- Toplam tahmini net gelir hesapla\n" +
-    "- ÖNEMLİ: Şube bazında somut kutu sayıları ver, genel tavsiye verme\n" +
+    "- Somut kutu içerikleri ver, genel tavsiye verme\n" +
     "\nÇIKTI FORMATI:\n" +
     "Her şube için:\n" +
     "📦 [ŞUBE ADI] - [KUTU SAYISI] kutu\n" +
-    "  - [ÇİÇEK]: [DEMET] dm (sebep)\n" +
-    "Sonra toplam özet ve tahmini gelir.";
+    "  Kutu 1: [DEMET] dm [ÇİÇEK1] + [DEMET] dm [ÇİÇEK2] (fiyat: X₺/dm, trend: +Y%)\n\n" +
+    "Sonunda:\n" +
+    "📊 ÖZET\n" +
+    "- Toplam kutu: X\n" +
+    "- Tahmini net gelir: X ₺\n" +
+    "- Risk notu ve alternatif öneri";
 
   try {
     var resp = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        system: "Sen bir çiçek mezat lojistik uzmanısın. Kullanıcı Yalova'da çiçek üreticisi, Flora mezatına gönderiyor. Gider %20. Türkçe cevap ver. VERİLERE DAYANARAK somut kutu dağılımı yap. Her kutuya " + state.planBoxSize + " demet giriyor. Kesin sayılar ver, belirsiz ifadeler kullanma.",
+        system: "Sen bir çiçek mezat lojistik uzmanısın. Kullanıcı Yalova'da çiçek üreticisi, Flora mezatına gönderiyor. Gider %20. Türkçe cevap ver. MUTLAK FİYAT her zaman TREND'den önemlidir — 180₺'den düşen şube 85₺'ye yükselen şubeden HÂLÂ daha kârlı! Düşüyor diye yüksek fiyatlı şubeyi bırakma. Somut kutu dağılımı yap. Bir kutuya " + state.planBoxSize + " demet, karışık çiçek konabilir. Kesin sayılar ver.",
         messages: [{ role: "user", content: planPrompt }]
       })
     });
