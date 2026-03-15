@@ -765,9 +765,9 @@ function render() {
     html += `<div class="card" style="margin-bottom:12px">`;
     html += `<div style="font-size:13px;font-weight:600;color:#f8fafc;margin-bottom:10px">3. Gönderim Stratejisi</div>`;
     var strategies = [
-      {id:"safe",l:"🛡 Güvenli",d:"En kârlı kanıtlanmış şubelere gönder"},
-      {id:"balanced",l:"⚖ Dengeli",d:"Kâr ve risk dengesini kur"},
-      {id:"aggressive",l:"🚀 Agresif",d:"En yüksek fiyata odaklan"},
+      {id:"safe",l:"🛡 Güvenli",d:"Sert filtre: -%15 azalt, -%30 gönderme. Kanıtlanmış şubelere."},
+      {id:"balanced",l:"⚖ Dengeli",d:"Orta filtre: -%25 azalt, -%40 gönderme. Dengeli dağılım."},
+      {id:"aggressive",l:"🚀 Agresif",d:"Esnek filtre: -%35 azalt, -%50 gönderme. Risk alarak kazanç."},
     ];
     strategies.forEach(s => {
       html += `<div onclick="setState({planStrategy:'${s.id}'})" style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;cursor:pointer;margin-bottom:4px;background:${state.planStrategy===s.id?'rgba(34,197,94,0.1)':'transparent'};border:1px solid ${state.planStrategy===s.id?'rgba(34,197,94,0.2)':'rgba(255,255,255,0.04)'}">`;
@@ -1422,29 +1422,41 @@ async function handlePlan() {
       var hist = branch2025[e[0]];
       var histDbn = hist && hist.d > 0 ? hist.net / hist.d : 0;
 
-      // DURUM ETİKETİ BELİRLE
+      // DURUM ETİKETİ BELİRLE — Stratejiye göre farklı eşikler
+      var azaltEsik, gondermeEsik;
+      if (state.planStrategy === "safe") {
+        azaltEsik = -15;    // %15 altında → AZALT
+        gondermeEsik = -30; // %30 altında → GÖNDERME
+      } else if (state.planStrategy === "balanced") {
+        azaltEsik = -25;    // %25 altında → AZALT
+        gondermeEsik = -40; // %40 altında → GÖNDERME
+      } else { // aggressive
+        azaltEsik = -35;    // %35 altında → AZALT
+        gondermeEsik = -50; // %50 altında → GÖNDERME
+      }
+
       var status = "GÖNDER";
       var statusReason = "";
 
       if (last2Dbn !== null && genelOrtalama > 0) {
         var fark = ((last2Dbn - genelOrtalama) / genelOrtalama * 100);
-        if (fark < -30) {
+        if (fark < gondermeEsik) {
           status = "GÖNDERME";
-          statusReason = "Son 2 mezat ortalamanın %" + Math.abs(fark).toFixed(0) + " altında!";
-        } else if (fark < -15) {
+          statusReason = "Son 2 mezat ortalamanın %" + Math.abs(fark).toFixed(0) + " altında (eşik: %" + Math.abs(gondermeEsik) + ")";
+        } else if (fark < azaltEsik) {
           status = "AZALT";
-          statusReason = "Son 2 mezat ortalamanın %" + Math.abs(fark).toFixed(0) + " altında, demet yarıya düşür";
+          statusReason = "Son 2 mezat ortalamanın %" + Math.abs(fark).toFixed(0) + " altında (eşik: %" + Math.abs(azaltEsik) + "), demet yarıya düşür";
         }
       } else if (last2Dbn === null) {
         // Son 2 mezat verisi yok → genel ortalamaya bak
         if (avgDbn > 0 && genelOrtalama > 0) {
           var genelFark = ((avgDbn - genelOrtalama) / genelOrtalama * 100);
-          if (genelFark < -30) {
+          if (genelFark < gondermeEsik) {
             status = "GÖNDERME";
-            statusReason = "Genel ortalama çok düşük (veri az)";
-          } else if (genelFark < -15) {
+            statusReason = "Genel ortalama çok düşük";
+          } else if (genelFark < azaltEsik) {
             status = "AZALT";
-            statusReason = "Genel ortalama düşük, son mezat verisi yok";
+            statusReason = "Genel ortalama düşük";
           }
         }
         statusReason += (statusReason ? " | " : "") + "Son 2 mezat verisi yok, genel ortalamaya bakıldı";
@@ -1540,9 +1552,9 @@ async function handlePlan() {
   }
 
   var strategyDesc = {
-    safe: "GÜVENLİ: En yüksek fiyatlı kanıtlanmış şubelere. Riski minimize et.",
-    aggressive: "AGRESİF: En yüksek fiyata odaklan, momentum yakala.",
-    balanced: "DENGELİ: Fiyat ve risk dengesini kur."
+    safe: "GÜVENLİ strateji (SERT FİLTRE): Son 2 mezat ortalamanın %15+ altındaki kombinasyonları AZALT, %30+ altındakilere GÖNDERME. Sadece kanıtlanmış kârlı şubelere gönder. Maximum güvenlik.",
+    balanced: "DENGELİ strateji (ORTA FİLTRE): Son 2 mezat ortalamanın %25+ altındakileri AZALT, %40+ altındakilere GÖNDERME. Biraz daha toleranslı, küçük düşüşleri kabul eder.",
+    aggressive: "AGRESİF strateji (ESNEK FİLTRE): Son 2 mezat ortalamanın %35+ altındakileri AZALT, %50+ altındakilere GÖNDERME. Yüksek risk, yüksek kazanç potansiyeli. Trendi yükselen şubelere şans verir."
   };
 
   var totalDemet = state.planFlowers.reduce(function(s,f){return s+f.demet},0);
