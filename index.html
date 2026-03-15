@@ -1355,20 +1355,36 @@ async function handlePlan() {
 
   var trendInfo = "\nSEÇİLİ DÖNEM: " + fD(state.sd) + " – " + fD(state.ed);
 
-  // ── Per flower: build price ranking + 2025 comparison ──
+  // ── Per flower: price ranking + last 2 auction filter + 2025 data ──
   state.planFlowers.forEach(function(pf) {
     var flowerFiltered = filtered.filter(function(r){ return r.c === pf.name });
     var flowerRecent = recentData.filter(function(r){ return r.c === pf.name });
     var flower2025 = data2025.filter(function(r){ return r.c === pf.name });
 
-    // Current period branch performance
+    // Current period branch performance (genel ortalama)
     var byBranch = {};
     flowerFiltered.forEach(function(r){
       if(!byBranch[r.s]) byBranch[r.s] = {net:0,d:0};
       byBranch[r.s].net += r.net; byBranch[r.s].d += r.d;
     });
 
-    // Recent daily trend per branch
+    // Genel ortalama (bu çiçeğin tüm şubelerdeki ortalaması)
+    var totalNet = flowerFiltered.reduce(function(s,r){return s+r.net},0);
+    var totalD = flowerFiltered.reduce(function(s,r){return s+r.d},0);
+    var genelOrtalama = totalD > 0 ? totalNet / totalD : 0;
+
+    // Son 2 mezat günü bul (bu çiçek için en son 2 farklı tarih)
+    var uniqueDates = [...new Set(flowerRecent.map(function(r){return r.t}))].sort().reverse();
+    var last2Dates = uniqueDates.slice(0, 2);
+
+    // Son 2 mezattaki şube bazlı performans
+    var last2ByBranch = {};
+    flowerRecent.filter(function(r){ return last2Dates.includes(r.t) }).forEach(function(r){
+      if(!last2ByBranch[r.s]) last2ByBranch[r.s] = {net:0,d:0};
+      last2ByBranch[r.s].net += r.net; last2ByBranch[r.s].d += r.d;
+    });
+
+    // Recent daily trend per branch (14 gün)
     var dailyByBranch = {};
     flowerRecent.forEach(function(r){
       if(!dailyByBranch[r.s]) dailyByBranch[r.s] = {};
@@ -1376,16 +1392,18 @@ async function handlePlan() {
       dailyByBranch[r.s][r.t].net += r.net; dailyByBranch[r.s][r.t].d += r.d;
     });
 
-    // 2025 branch data for this flower
+    // 2025 branch data
     var branch2025 = {};
     flower2025.forEach(function(r){
       if(!branch2025[r.s]) branch2025[r.s] = {net:0,d:0};
       branch2025[r.s].net += r.net; branch2025[r.s].d += r.d;
     });
 
-    // Build ranked list
+    // Build ranked list with status labels
     var branchRanked = Object.entries(byBranch).map(function(e){
       var avgDbn = e[1].d > 0 ? e[1].net / e[1].d : 0;
+
+      // Trend hesapla
       var days = Object.entries(dailyByBranch[e[0]] || {}).sort(function(a,b){return a[0].localeCompare(b[0])});
       var trendPct = 0;
       if (days.length >= 2) {
@@ -1395,23 +1413,71 @@ async function handlePlan() {
         var sA = sH.reduce(function(s,d){return s+(d[1].d>0?d[1].net/d[1].d:0)},0) / sH.length;
         trendPct = fA > 0 ? ((sA - fA) / fA * 100) : 0;
       }
-      // 2025 data for this branch
+
+      // Son 2 mezat fiyatı
+      var last2Data = last2ByBranch[e[0]];
+      var last2Dbn = last2Data && last2Data.d > 0 ? last2Data.net / last2Data.d : null;
+
+      // 2025 data
       var hist = branch2025[e[0]];
       var histDbn = hist && hist.d > 0 ? hist.net / hist.d : 0;
-      return {name:e[0], dbn:avgDbn, d:e[1].d, trend:trendPct, histDbn:histDbn};
+
+      // DURUM ETİKETİ BELİRLE
+      var status = "GÖNDER";
+      var statusReason = "";
+
+      if (last2Dbn !== null && genelOrtalama > 0) {
+        var fark = ((last2Dbn - genelOrtalama) / genelOrtalama * 100);
+        if (fark < -30) {
+          status = "GÖNDERME";
+          statusReason = "Son 2 mezat ortalamanın %" + Math.abs(fark).toFixed(0) + " altında!";
+        } else if (fark < -15) {
+          status = "AZALT";
+          statusReason = "Son 2 mezat ortalamanın %" + Math.abs(fark).toFixed(0) + " altında, demet yarıya düşür";
+        }
+      } else if (last2Dbn === null) {
+        // Son 2 mezat verisi yok → genel ortalamaya bak
+        if (avgDbn > 0 && genelOrtalama > 0) {
+          var genelFark = ((avgDbn - genelOrtalama) / genelOrtalama * 100);
+          if (genelFark < -30) {
+            status = "GÖNDERME";
+            statusReason = "Genel ortalama çok düşük (veri az)";
+          } else if (genelFark < -15) {
+            status = "AZALT";
+            statusReason = "Genel ortalama düşük, son mezat verisi yok";
+          }
+        }
+        statusReason += (statusReason ? " | " : "") + "Son 2 mezat verisi yok, genel ortalamaya bakıldı";
+      }
+
+      return {name:e[0], dbn:avgDbn, d:e[1].d, trend:trendPct, histDbn:histDbn, last2Dbn:last2Dbn, status:status, statusReason:statusReason};
     }).sort(function(a,b){ return b.dbn - a.dbn });
 
-    // Price ranking with distribution suggestions
-    var totalPrice = branchRanked.reduce(function(s,b){return s+b.dbn},0);
-    trendInfo += "\n\n" + pf.name + " (" + pf.demet + " demet)";
-    trendInfo += "\n  2026 FİYAT SIRALAMASI (yüksekten düşüğe):";
+    // Build info string
+    var totalPrice = branchRanked.filter(function(b){return b.status!=="GÖNDERME"}).reduce(function(s,b){return s+b.dbn},0);
+
+    trendInfo += "\n\n" + pf.name + " (" + pf.demet + " demet) — Genel ort: " + fmt(genelOrtalama) + "/dm";
+    if (last2Dates.length > 0) trendInfo += " | Son 2 mezat: " + last2Dates.map(function(d){return fD(d)}).join(", ");
+
+    trendInfo += "\n  ŞUBE ANALİZİ (yüksekten düşüğe):";
     branchRanked.forEach(function(b, idx) {
-      var trendDir = b.trend > 3 ? "↑YUKARI" : b.trend < -3 ? "↓AŞAĞI" : "→SABİT";
-      var histNote = b.histDbn > 0 ? ", 2025'te:" + fmt(b.histDbn) + "/dm" : "";
-      var sugPct = Math.round((totalPrice > 0 ? b.dbn / totalPrice : 0) * 120);
-      if (idx === 0) sugPct = Math.max(sugPct, 35);
-      if (idx >= branchRanked.length - 2 && branchRanked.length > 3) sugPct = Math.min(sugPct, 8);
-      trendInfo += "\n    " + (idx+1) + ". " + b.name + ": " + fmt(b.dbn) + "/dm (" + trendDir + " " + (b.trend>0?"+":"") + b.trend.toFixed(0) + "%" + histNote + ") → ÖNERİ: %" + sugPct;
+      var trendDir = b.trend > 3 ? "↑" : b.trend < -3 ? "↓" : "→";
+      var histNote = b.histDbn > 0 ? " | 2025:" + fmt(b.histDbn) : "";
+      var last2Note = b.last2Dbn !== null ? " | Son2mezat:" + fmt(b.last2Dbn) : " | Son2mezat:YOK";
+
+      var statusIcon = b.status === "GÖNDER" ? "✅" : b.status === "AZALT" ? "⚠️" : "❌";
+
+      // Yüzde önerisi (sadece GÖNDER ve AZALT olanlar için)
+      var sugPct = 0;
+      if (b.status !== "GÖNDERME" && totalPrice > 0) {
+        sugPct = Math.round((b.dbn / totalPrice) * 100);
+        if (b.status === "AZALT") sugPct = Math.round(sugPct * 0.5); // Azalt → yarıya düşür
+      }
+
+      trendInfo += "\n    " + statusIcon + " " + b.name + ": " + fmt(b.dbn) + "/dm (trend:" + trendDir + (b.trend>0?"+":"") + b.trend.toFixed(0) + "%" + last2Note + histNote + ")";
+      if (b.status === "GÖNDERME") trendInfo += " → ❌ GÖNDERME: " + b.statusReason;
+      else if (b.status === "AZALT") trendInfo += " → ⚠️ AZALT (%" + sugPct + "): " + b.statusReason;
+      else trendInfo += " → ÖNERİ: %" + sugPct;
     });
 
     // 2025 branches NOT in current data (for explore mode)
@@ -1424,16 +1490,15 @@ async function handlePlan() {
       }).sort(function(a,b){return b.dbn - a.dbn});
 
       if (potentialBranches.length > 0) {
-        trendInfo += "\n  🔍 2025'TE VARI AMA 2026'DA YOK (deneme potansiyeli):";
+        trendInfo += "\n  🔍 DENEME POTANSİYELİ (2025'te var, 2026'da yok):";
         potentialBranches.slice(0,5).forEach(function(b){
-          trendInfo += "\n    ⭐ " + b.name + ": 2025'te " + fmt(b.dbn) + "/dm (" + b.d + "dm gönderilmişti)";
+          trendInfo += "\n    ⭐ " + b.name + ": 2025'te " + fmt(b.dbn) + "/dm (" + b.d + "dm)";
         });
       }
 
-      // Also check all branches from 2025 that have low volume in 2026
-      var lowVolume = branchRanked.filter(function(b){ return b.d <= 5 && b.dbn > 0 });
+      var lowVolume = branchRanked.filter(function(b){ return b.d <= 5 && b.dbn > 0 && b.status !== "GÖNDERME" });
       if (lowVolume.length > 0) {
-        trendInfo += "\n  🔍 2026'DA AZ GÖNDERİLMİŞ AMA FİYAT İYİ:";
+        trendInfo += "\n  🔍 AZ DENENMİŞ AMA İYİ FİYAT:";
         lowVolume.forEach(function(b){
           trendInfo += "\n    ⭐ " + b.name + ": " + fmt(b.dbn) + "/dm (sadece " + b.d + "dm)";
         });
@@ -1492,17 +1557,20 @@ async function handlePlan() {
     "\n\nKombo sıralaması: " + hd.slice(0,25).map(function(h){return h.cicek+"→"+h.sube+":"+fmt(h.dbn)+"/dm"}).join("; ") +
     hist2025Text +
     "\n\n🚨 ZORUNLU KURALLAR:\n" +
-    "1. EN PAHALI şubeye EN ÇOK kutu! Fiyat sıralamasına KESİNLİKLE uy.\n" +
-    "2. Her çiçeğin toplam demeti girilen miktara TAM EŞİT olmalı.\n" +
-    "3. Kutu başına " + state.planBoxSize + " demet. Karışık çiçek konulabilir.\n" +
-    "4. UCUZ şubeye PAHALI şubeden fazla kutu YASAK!\n" +
-    "5. Her kararı VERİ ile destekle (fiyat + trend).\n" +
-    "6. 2025 verisini REFERANS olarak kullan (%20 ağırlık) — asıl kararı güncel veriye göre ver.\n" +
+    "1. ❌ GÖNDERME etiketli çiçek-şube kombinasyonlarına KESİNLİKLE kutu yapma! Son 2 mezat ortalamanın %30+ altında.\n" +
+    "2. ⚠️ AZALT etiketli kombinasyonlara önerilen yüzdenin YARISINI ver. Son 2 mezat ortalamanın %15-30 altında.\n" +
+    "3. ✅ GÖNDER etiketli kombinasyonlara önerilen yüzdeye göre dağıt.\n" +
+    "4. EN PAHALI şubeye EN ÇOK kutu! Fiyat sıralamasına uy.\n" +
+    "5. Her çiçeğin toplam demeti girilen miktara TAM EŞİT olmalı.\n" +
+    "6. Kutu başına " + state.planBoxSize + " demet. Karışık çiçek konulabilir.\n" +
+    "7. UCUZ şubeye PAHALI şubeden fazla kutu YASAK!\n" +
+    "8. 2025 verisi referans (%20 ağırlık), güncel veri ana karar (%80).\n" +
+    "9. Tüm şubelere kutu yapmak ZORUNLU DEĞİL — sadece ✅ ve ⚠️ olanlara yap.\n" +
     "\nÇIKTI FORMATI:\n" +
     "📦 [ŞUBE] - [KUTU] kutu\n" +
-    "  Kutu X: [DM] dm [ÇİÇEK] (fiyat: X₺/dm, trend: +Y%)\n" +
+    "  Kutu X: [DM] dm [ÇİÇEK] (fiyat: X₺/dm, son2mezat: X₺, trend: +Y%)\n" +
     (state.planBranchMode==="explore" ? "  🔍 DENEME kutularını ayrı belirt\n" : "") +
-    "\n📊 ÖZET: Toplam kutu, tahmini net gelir, risk notu";
+    "\n📊 ÖZET: Toplam kutu, tahmini net gelir, risk notu, elenen şubeler ve nedenleri";
 
   try {
     var resp = await fetch("/api/chat", {
@@ -1510,10 +1578,11 @@ async function handlePlan() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         system: "Sen çiçek mezat lojistik uzmanısın. Yalova'da üretici, Flora mezatına gönderiyor. Gider %20. Türkçe.\n\n" +
-          "1 NOLU KURAL: EN PAHALI şubeye EN ÇOK kutu! Ucuz şubeye pahalıdan fazla kutu YASAK.\n" +
-          "2 NOLU KURAL: Tüm şubelere kutu yapmak ZORUNLU DEĞİL — sadece kârlı olanlara yap.\n" +
-          "3 NOLU KURAL: 2025 verisi referans (%20 ağırlık), güncel veri ana karar (%80).\n" +
-          "Kutu başına " + state.planBoxSize + " demet, karışık çiçek olabilir. Kesin sayılar ver.",
+          "EN ÖNEMLİ KURAL: ❌ GÖNDERME etiketli kombinasyonlara KESİNLİKLE kutu yapma! Bu çiçeğin son 2 mezatı o şubede ortalamanın çok altında.\n" +
+          "⚠️ AZALT etiketlilere yarı pay ver. ✅ GÖNDER etiketlilere normal dağıt.\n" +
+          "EN PAHALI şubeye EN ÇOK kutu. Ucuz şubeye pahalıdan fazla kutu YASAK.\n" +
+          "Tüm şubelere kutu yapmak ZORUNLU DEĞİL. 2025 verisi %20 ağırlık.\n" +
+          "Her kutuya " + state.planBoxSize + " demet, karışık çiçek olabilir. Kesin sayılar ver.",
         messages: [{ role: "user", content: planPrompt }]
       })
     });
