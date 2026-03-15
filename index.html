@@ -1552,9 +1552,24 @@ async function handlePlan() {
   }
 
   var strategyDesc = {
-    safe: "GÜVENLİ strateji (SERT FİLTRE): Son 2 mezat ortalamanın %15+ altındaki kombinasyonları AZALT, %30+ altındakilere GÖNDERME. Sadece kanıtlanmış kârlı şubelere gönder. Maximum güvenlik.",
-    balanced: "DENGELİ strateji (ORTA FİLTRE): Son 2 mezat ortalamanın %25+ altındakileri AZALT, %40+ altındakilere GÖNDERME. Biraz daha toleranslı, küçük düşüşleri kabul eder.",
-    aggressive: "AGRESİF strateji (ESNEK FİLTRE): Son 2 mezat ortalamanın %35+ altındakileri AZALT, %50+ altındakilere GÖNDERME. Yüksek risk, yüksek kazanç potansiyeli. Trendi yükselen şubelere şans verir."
+    safe: "GÜVENLİ STRATEJİ:\n" +
+      "• Filtre: Son 2 mezat ortalamanın %15+ altı → AZALT, %30+ altı → GÖNDERME\n" +
+      "• Şube sayısı: MAX 4-5 şube. Az ama emin olduğun yerlere.\n" +
+      "• Dağılım: 1.şube %40-45, 2.şube %25-30, 3.şube %15-20, geri kalan %5-10\n" +
+      "• Karar mantığı: MUTLAK FİYAT ağırlıklı. Trend'e çok bakma. Geçmişte kanıtlanmış, yeterli veri olan şubelere gönder.\n" +
+      "• Felsefe: Az kazanayım ama kayıp riskim düşük olsun.",
+    balanced: "DENGELİ STRATEJİ:\n" +
+      "• Filtre: Son 2 mezat ortalamanın %25+ altı → AZALT, %40+ altı → GÖNDERME\n" +
+      "• Şube sayısı: 5-8 şube. Daha geniş yay ama hâlâ kontrollü.\n" +
+      "• Dağılım: 1.şube %30-35, 2.şube %20-25, 3.şube %15-20, 4-5.şube %10-15, kalan %5-10\n" +
+      "• Karar mantığı: Fiyat %60 ağırlık + Trend %40 ağırlık. İkisini dengele.\n" +
+      "• Felsefe: Makul risk, makul kazanç. Normal dağılım.",
+    aggressive: "AGRESİF STRATEJİ:\n" +
+      "• Filtre: Son 2 mezat ortalamanın %35+ altı → AZALT, %50+ altı → GÖNDERME\n" +
+      "• Şube sayısı: 6-10 şube. Geniş dağılım.\n" +
+      "• Dağılım: 1.şube %25-30, 2.şube %20-25, 3.şube %15-20, kalan şubeler %5-15 paylaşır (daha eşit dağılım)\n" +
+      "• Karar mantığı: Trend %60 ağırlık + Fiyat %40 ağırlık. Trendi YÜKSELEN şubelere ekstra şans ver. Fiyatı düşük ama hızla yükselen bir şube varsa güvenli modda görmezden gelinecek o şubeye de kutu yap.\n" +
+      "• Felsefe: Maksimum kazanç hedefle. Momentum yakala. Kayıp olabilir ama yukarı potansiyel büyük."
   };
 
   var totalDemet = state.planFlowers.reduce(function(s,f){return s+f.demet},0);
@@ -1590,11 +1605,30 @@ async function handlePlan() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         system: "Sen çiçek mezat lojistik uzmanısın. Yalova'da üretici, Flora mezatına gönderiyor. Gider %20. Türkçe.\n\n" +
-          "EN ÖNEMLİ KURAL: ❌ GÖNDERME etiketli kombinasyonlara KESİNLİKLE kutu yapma! Bu çiçeğin son 2 mezatı o şubede ortalamanın çok altında.\n" +
+          "EN ÖNEMLİ KURAL: ❌ GÖNDERME etiketli kombinasyonlara KESİNLİKLE kutu yapma!\n" +
           "⚠️ AZALT etiketlilere yarı pay ver. ✅ GÖNDER etiketlilere normal dağıt.\n" +
-          "EN PAHALI şubeye EN ÇOK kutu. Ucuz şubeye pahalıdan fazla kutu YASAK.\n" +
           "Tüm şubelere kutu yapmak ZORUNLU DEĞİL. 2025 verisi %20 ağırlık.\n" +
-          "Her kutuya " + state.planBoxSize + " demet, karışık çiçek olabilir. Kesin sayılar ver.",
+          "Her kutuya " + state.planBoxSize + " demet, karışık çiçek olabilir. Kesin sayılar ver.\n\n" +
+          (state.planStrategy === "safe" ?
+            "STRATEJİ DAVRANIŞI — GÜVENLİ:\n" +
+            "• Max 4-5 şubeye gönder. Sadece kanıtlanmış yerlere.\n" +
+            "• MUTLAK FİYAT ağırlıklı karar ver. Trend'e fazla bakma.\n" +
+            "• 1.şubeye %40-45, 2.şubeye %25-30, geri kalana az.\n" +
+            "• Az kazanayım ama kayıp olmasın mantığı.\n" +
+            "• Ucuz şubeye pahalıdan fazla kutu YASAK." :
+          state.planStrategy === "balanced" ?
+            "STRATEJİ DAVRANIŞI — DENGELİ:\n" +
+            "• 5-8 şubeye gönder. Geniş ama kontrollü.\n" +
+            "• Fiyat %60 + Trend %40 ağırlıkla karar ver.\n" +
+            "• 1.şubeye %30-35, 2.şubeye %20-25, daha eşit yay.\n" +
+            "• Makul risk, makul kazanç.\n" +
+            "• Ucuz şubeye pahalıdan fazla kutu YASAK." :
+            "STRATEJİ DAVRANIŞI — AGRESİF:\n" +
+            "• 6-10 şubeye gönder. Geniş dağılım.\n" +
+            "• Trend %60 + Fiyat %40 ağırlıkla karar ver.\n" +
+            "• Daha eşit dağılım: 1.şubeye %25-30, diğerleri %10-20.\n" +
+            "• Trendi YÜKSELEN şubelere ekstra şans ver — fiyatı düşük ama hızla yükselen şubeye de kutu yap.\n" +
+            "• Maksimum kazanç hedefle, risk tolere et."),
         messages: [{ role: "user", content: planPrompt }]
       })
     });
