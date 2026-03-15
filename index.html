@@ -270,11 +270,13 @@ let state = {
   expanded: {},
   aiQ: "", aiH: [], aiL: false,
   ddOpen: null,
-  chartOpen: null, // "flower:NAME" or "branch:NAME"
+  chartOpen: null,
   // Planner
   planFlowers: [],
   planBoxSize: 8,
   planStrategy: "safe",
+  planBranchMode: "auto", // "auto", "manual", "explore"
+  planManualBranches: [], // selected branch names for manual mode
   planResult: null,
   planLoading: false
 };
@@ -760,13 +762,12 @@ function render() {
     html += `</div></div>`;
 
     // Step 3: Strategy
-    html += `<div class="card" style="margin-bottom:14px">`;
+    html += `<div class="card" style="margin-bottom:12px">`;
     html += `<div style="font-size:13px;font-weight:600;color:#f8fafc;margin-bottom:10px">3. Gönderim Stratejisi</div>`;
     var strategies = [
-      {id:"safe",l:"🛡 Güvenli",d:"Kanıtlanmış şubelere, düşük risk"},
-      {id:"aggressive",l:"🚀 Agresif",d:"En yüksek fiyat, yüksek risk"},
-      {id:"balanced",l:"⚖ Dengeli",d:"Kârlılık ve risk dengesi"},
-      {id:"explore",l:"🔍 Deneme",d:"Yeni şubelere de gönder"}
+      {id:"safe",l:"🛡 Güvenli",d:"En kârlı kanıtlanmış şubelere gönder"},
+      {id:"balanced",l:"⚖ Dengeli",d:"Kâr ve risk dengesini kur"},
+      {id:"aggressive",l:"🚀 Agresif",d:"En yüksek fiyata odaklan"},
     ];
     strategies.forEach(s => {
       html += `<div onclick="setState({planStrategy:'${s.id}'})" style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;cursor:pointer;margin-bottom:4px;background:${state.planStrategy===s.id?'rgba(34,197,94,0.1)':'transparent'};border:1px solid ${state.planStrategy===s.id?'rgba(34,197,94,0.2)':'rgba(255,255,255,0.04)'}">`;
@@ -774,6 +775,45 @@ function render() {
       html += `<div><div style="font-size:13px;color:${state.planStrategy===s.id?'#f8fafc':'#94a3b8'};font-weight:${state.planStrategy===s.id?'600':'400'}">${s.l}</div><div style="font-size:10px;color:#475569">${s.d}</div></div>`;
       html += `</div>`;
     });
+    html += `</div>`;
+
+    // Step 4: Branch Selection Mode
+    html += `<div class="card" style="margin-bottom:14px">`;
+    html += `<div style="font-size:13px;font-weight:600;color:#f8fafc;margin-bottom:10px">4. Şube Seçimi</div>`;
+    var branchModes = [
+      {id:"auto",l:"🤖 Otomatik",d:"AI en kârlı şubeleri kendisi seçsin (hepsine değil)"},
+      {id:"manual",l:"📝 Manuel",d:"Ben istediğim şubeleri seçeyim"},
+      {id:"explore",l:"🔍 Deneme",d:"Bilinen şubeler + geçmiş verilere göre yeni şube öner"}
+    ];
+    branchModes.forEach(m => {
+      html += `<div onclick="setState({planBranchMode:'${m.id}'})" style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;cursor:pointer;margin-bottom:4px;background:${state.planBranchMode===m.id?'rgba(96,165,250,0.1)':'transparent'};border:1px solid ${state.planBranchMode===m.id?'rgba(96,165,250,0.2)':'rgba(255,255,255,0.04)'}">`;
+      html += `<div style="width:18px;height:18px;border-radius:50%;border:2px solid ${state.planBranchMode===m.id?'#60a5fa':'#475569'};display:flex;align-items:center;justify-content:center">${state.planBranchMode===m.id?'<div style="width:8px;height:8px;border-radius:50%;background:#60a5fa"></div>':''}</div>`;
+      html += `<div><div style="font-size:13px;color:${state.planBranchMode===m.id?'#f8fafc':'#94a3b8'};font-weight:${state.planBranchMode===m.id?'600':'400'}">${m.l}</div><div style="font-size:10px;color:#475569">${m.d}</div></div>`;
+      html += `</div>`;
+    });
+
+    // Manual branch selector
+    if (state.planBranchMode === "manual") {
+      html += `<div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">`;
+      html += `<div style="font-size:11px;color:#64748b;margin-bottom:8px">Göndermek istediğin şubeleri seç:</div>`;
+      html += `<div style="display:flex;flex-wrap:wrap;gap:6px">`;
+      BRANCHES.forEach(b => {
+        var isSelected = state.planManualBranches.includes(b);
+        html += `<button onclick="togglePlanBranch('${esc(b)}')" style="padding:6px 12px;border-radius:8px;border:1px solid ${isSelected?'rgba(96,165,250,0.3)':'rgba(255,255,255,0.08)'};background:${isSelected?'rgba(96,165,250,0.15)':'transparent'};color:${isSelected?'#93c5fd':'#64748b'};font-size:11px;cursor:pointer;font-weight:${isSelected?'600':'400'}">${isSelected?'✓ ':''}${esc(b)}</button>`;
+      });
+      html += `</div>`;
+      if (state.planManualBranches.length > 0) {
+        html += `<div style="margin-top:8px;font-size:11px;color:#60a5fa">${state.planManualBranches.length} şube seçildi</div>`;
+      }
+      html += `</div>`;
+    }
+
+    // Explore info
+    if (state.planBranchMode === "explore") {
+      html += `<div style="margin-top:10px;padding:10px;border-radius:8px;background:rgba(250,204,21,0.06);border:1px solid rgba(250,204,21,0.12)">`;
+      html += `<div style="font-size:11px;color:#fbbf24;line-height:1.5">💡 Deneme modu: AI kârlı şubelere ana dağılımı yapar + geçmiş yıl verilerine bakarak potansiyelli ama az denenen şubelere 1-2 kutu deneme gönderimi önerir.</div>`;
+      html += `</div>`;
+    }
     html += `</div>`;
 
     // Generate button
@@ -1237,6 +1277,14 @@ function removePlanFlower(index) {
   render();
 }
 
+function togglePlanBranch(name) {
+  var idx = state.planManualBranches.indexOf(name);
+  if (idx >= 0) state.planManualBranches.splice(idx, 1);
+  else state.planManualBranches.push(name);
+  state.planResult = null;
+  render();
+}
+
 function copyPlan() {
   if (state.planResult) {
     navigator.clipboard.writeText(state.planResult.replace(/\*\*/g, "")).then(function(){
@@ -1285,6 +1333,10 @@ function deletePlan(index) {
 
 async function handlePlan() {
   if (state.planFlowers.length === 0 || state.planLoading) return;
+  if (state.planBranchMode === "manual" && state.planManualBranches.length === 0) {
+    alert("Manuel modda en az 1 şube seçmelisin!");
+    return;
+  }
   state.planLoading = true;
   state.planResult = null;
   render();
@@ -1292,63 +1344,140 @@ async function handlePlan() {
   var filtered = getFiltered();
   var stats = calcStats(filtered);
   var hd = getHeatData(filtered);
-  var bc = getBranchComp(filtered);
 
-  // Build trend data from selected date range + last 14 days for trend
+  // ── 2026 Recent data (last 14 days) for trends ──
   var last14 = new Date(); last14.setDate(last14.getDate() - 14);
   var last14str = last14.toISOString().split("T")[0];
   var recentData = ALL_DATA.filter(function(r){ return r.t >= last14str });
-  var trendInfo = "\n\nSEÇİLİ DÖNEM: " + fD(state.sd) + " – " + fD(state.ed);
 
+  // ── 2025 data for historical context ──
+  var data2025 = ALL_DATA.filter(function(r){ return r.t.startsWith("2025") });
+
+  var trendInfo = "\nSEÇİLİ DÖNEM: " + fD(state.sd) + " – " + fD(state.ed);
+
+  // ── Per flower: build price ranking + 2025 comparison ──
   state.planFlowers.forEach(function(pf) {
-    // Current period data (filtered)
     var flowerFiltered = filtered.filter(function(r){ return r.c === pf.name });
-    // Recent 14 days data for trend
     var flowerRecent = recentData.filter(function(r){ return r.c === pf.name });
+    var flower2025 = data2025.filter(function(r){ return r.c === pf.name });
 
-    // Branch performance from filtered period
+    // Current period branch performance
     var byBranch = {};
     flowerFiltered.forEach(function(r){
-      if(!byBranch[r.s]) byBranch[r.s] = {net:0,d:0,prices:[]};
-      byBranch[r.s].net += r.net;
-      byBranch[r.s].d += r.d;
-      byBranch[r.s].prices.push(r.dbn);
+      if(!byBranch[r.s]) byBranch[r.s] = {net:0,d:0};
+      byBranch[r.s].net += r.net; byBranch[r.s].d += r.d;
     });
 
-    // Daily trend from recent data per branch
+    // Recent daily trend per branch
     var dailyByBranch = {};
     flowerRecent.forEach(function(r){
       if(!dailyByBranch[r.s]) dailyByBranch[r.s] = {};
       if(!dailyByBranch[r.s][r.t]) dailyByBranch[r.s][r.t] = {net:0,d:0};
-      dailyByBranch[r.s][r.t].net += r.net;
-      dailyByBranch[r.s][r.t].d += r.d;
+      dailyByBranch[r.s][r.t].net += r.net; dailyByBranch[r.s][r.t].d += r.d;
     });
 
-    var branchTrends = Object.entries(byBranch).map(function(e){
+    // 2025 branch data for this flower
+    var branch2025 = {};
+    flower2025.forEach(function(r){
+      if(!branch2025[r.s]) branch2025[r.s] = {net:0,d:0};
+      branch2025[r.s].net += r.net; branch2025[r.s].d += r.d;
+    });
+
+    // Build ranked list
+    var branchRanked = Object.entries(byBranch).map(function(e){
       var avgDbn = e[1].d > 0 ? e[1].net / e[1].d : 0;
-      // Calculate trend from daily data
-      var dailyData = dailyByBranch[e[0]] || {};
-      var days = Object.entries(dailyData).sort(function(a,b){return a[0].localeCompare(b[0])});
+      var days = Object.entries(dailyByBranch[e[0]] || {}).sort(function(a,b){return a[0].localeCompare(b[0])});
       var trendPct = 0;
       if (days.length >= 2) {
-        var firstHalf = days.slice(0, Math.floor(days.length/2));
-        var secondHalf = days.slice(Math.floor(days.length/2));
-        var firstAvg = firstHalf.reduce(function(s,d){return s+(d[1].d>0?d[1].net/d[1].d:0)},0) / firstHalf.length;
-        var secondAvg = secondHalf.reduce(function(s,d){return s+(d[1].d>0?d[1].net/d[1].d:0)},0) / secondHalf.length;
-        trendPct = firstAvg > 0 ? ((secondAvg - firstAvg) / firstAvg * 100) : 0;
+        var fH = days.slice(0, Math.floor(days.length/2));
+        var sH = days.slice(Math.floor(days.length/2));
+        var fA = fH.reduce(function(s,d){return s+(d[1].d>0?d[1].net/d[1].d:0)},0) / fH.length;
+        var sA = sH.reduce(function(s,d){return s+(d[1].d>0?d[1].net/d[1].d:0)},0) / sH.length;
+        trendPct = fA > 0 ? ((sA - fA) / fA * 100) : 0;
       }
-      var trendDir = trendPct > 3 ? "YÜKSELIYOR" : trendPct < -3 ? "DÜŞÜYOR" : "SABİT";
-      return e[0] + ":" + fmt(avgDbn) + "/dm," + e[1].d + "dm," + trendDir + "(" + (trendPct>0?"+":"") + trendPct.toFixed(0) + "%)";
-    }).sort(function(a,b){ return b.split(":")[1] > a.split(":")[1] ? 1 : -1 });
+      // 2025 data for this branch
+      var hist = branch2025[e[0]];
+      var histDbn = hist && hist.d > 0 ? hist.net / hist.d : 0;
+      return {name:e[0], dbn:avgDbn, d:e[1].d, trend:trendPct, histDbn:histDbn};
+    }).sort(function(a,b){ return b.dbn - a.dbn });
 
-    trendInfo += "\n" + pf.name + " şube performansı: " + branchTrends.join("; ");
+    // Price ranking with distribution suggestions
+    var totalPrice = branchRanked.reduce(function(s,b){return s+b.dbn},0);
+    trendInfo += "\n\n" + pf.name + " (" + pf.demet + " demet)";
+    trendInfo += "\n  2026 FİYAT SIRALAMASI (yüksekten düşüğe):";
+    branchRanked.forEach(function(b, idx) {
+      var trendDir = b.trend > 3 ? "↑YUKARI" : b.trend < -3 ? "↓AŞAĞI" : "→SABİT";
+      var histNote = b.histDbn > 0 ? ", 2025'te:" + fmt(b.histDbn) + "/dm" : "";
+      var sugPct = Math.round((totalPrice > 0 ? b.dbn / totalPrice : 0) * 120);
+      if (idx === 0) sugPct = Math.max(sugPct, 35);
+      if (idx >= branchRanked.length - 2 && branchRanked.length > 3) sugPct = Math.min(sugPct, 8);
+      trendInfo += "\n    " + (idx+1) + ". " + b.name + ": " + fmt(b.dbn) + "/dm (" + trendDir + " " + (b.trend>0?"+":"") + b.trend.toFixed(0) + "%" + histNote + ") → ÖNERİ: %" + sugPct;
+    });
+
+    // 2025 branches NOT in current data (for explore mode)
+    if (state.planBranchMode === "explore") {
+      var currentBranches = branchRanked.map(function(b){return b.name});
+      var potentialBranches = Object.entries(branch2025).filter(function(e){
+        return !currentBranches.includes(e[0]) && e[1].d > 0;
+      }).map(function(e){
+        return {name:e[0], dbn:e[1].d > 0 ? e[1].net / e[1].d : 0, d:e[1].d};
+      }).sort(function(a,b){return b.dbn - a.dbn});
+
+      if (potentialBranches.length > 0) {
+        trendInfo += "\n  🔍 2025'TE VARI AMA 2026'DA YOK (deneme potansiyeli):";
+        potentialBranches.slice(0,5).forEach(function(b){
+          trendInfo += "\n    ⭐ " + b.name + ": 2025'te " + fmt(b.dbn) + "/dm (" + b.d + "dm gönderilmişti)";
+        });
+      }
+
+      // Also check all branches from 2025 that have low volume in 2026
+      var lowVolume = branchRanked.filter(function(b){ return b.d <= 5 && b.dbn > 0 });
+      if (lowVolume.length > 0) {
+        trendInfo += "\n  🔍 2026'DA AZ GÖNDERİLMİŞ AMA FİYAT İYİ:";
+        lowVolume.forEach(function(b){
+          trendInfo += "\n    ⭐ " + b.name + ": " + fmt(b.dbn) + "/dm (sadece " + b.d + "dm)";
+        });
+      }
+    }
   });
 
+  // ── Branch mode specific instructions ──
+  var branchModeText = "";
+  if (state.planBranchMode === "auto") {
+    branchModeText = "\n\nŞUBE SEÇİM MODU: OTOMATİK\n" +
+      "Tüm şubelere kutu yapmak ZORUNDA DEĞİLSİN. Sadece kârlı olan şubeleri seç.\n" +
+      "Kural: En fazla 5-7 şubeye gönder. Fiyatı çok düşük olan şubeleri ATLA.\n" +
+      "Bir şubeye kutu yapmak için o şubenin dm başı net fiyatının, ortalama fiyatın en az %60'ı kadar olması gerekir.";
+  } else if (state.planBranchMode === "manual") {
+    branchModeText = "\n\nŞUBE SEÇİM MODU: MANUEL\n" +
+      "SADECE şu şubelere kutu yap, başka şubeye YAPMA: " + state.planManualBranches.join(", ") + "\n" +
+      "Bu şubeler arasında fiyat sıralamasına göre dağıt. En pahalıya en çok.";
+  } else if (state.planBranchMode === "explore") {
+    branchModeText = "\n\nŞUBE SEÇİM MODU: DENEME\n" +
+      "Ana dağılımı kârlı şubelere yap (toplam demetin %85-90'ı).\n" +
+      "Kalan %10-15'i DENEME şubelerine ayır (2025'te iyi fiyat vermiş ama 2026'da az/hiç gönderilmemiş şubeler).\n" +
+      "Deneme şubelerine MAX 1-2 kutu. 2025 verilerinde iyi fiyat veren şubeleri tercih et.\n" +
+      "Deneme kutularını açıkça '🔍 DENEME' olarak işaretle ve nedenini 2025 verisiyle açıkla.";
+  }
+
+  // ── 2025 overall context ──
+  var hist2025Text = "";
+  if (data2025.length > 0) {
+    var hist25ByF = {};
+    data2025.forEach(function(r){
+      if(!hist25ByF[r.c]) hist25ByF[r.c]={net:0,d:0};
+      hist25ByF[r.c].net+=r.net; hist25ByF[r.c].d+=r.d;
+    });
+    hist2025Text = "\n\n2025 GEÇMİŞ VERİ (referans — %20 ağırlık ver, %80 güncel veriye bak):\n";
+    hist2025Text += Object.entries(hist25ByF).map(function(e){
+      return e[0] + ": " + fmt(e[1].d>0?e[1].net/e[1].d:0) + "/dm, " + e[1].d + "dm";
+    }).join("; ");
+  }
+
   var strategyDesc = {
-    safe: "GÜVENLİ strateji: En yüksek MUTLAK FİYATI veren şubelere öncelik ver. Kanıtlanmış, stabil performans. Risk alma.",
-    aggressive: "AGRESİF strateji: Fiyatı yükselen şubelere ağırlık ver — momentum yakala. Yüksek fiyatlı ama düşüşte olan şubelerden biraz çek.",
-    balanced: "DENGELİ strateji: Hem mutlak fiyatı hem trendi dengele. Yüksek fiyatlı şubeleri koru, yükselenlere de pay ayır.",
-    explore: "DENEME stratejisi: Ana şubeleri koru ama az gönderim yapılan potansiyelli şubelere 1-2 kutu ayır."
+    safe: "GÜVENLİ: En yüksek fiyatlı kanıtlanmış şubelere. Riski minimize et.",
+    aggressive: "AGRESİF: En yüksek fiyata odaklan, momentum yakala.",
+    balanced: "DENGELİ: Fiyat ve risk dengesini kur."
   };
 
   var totalDemet = state.planFlowers.reduce(function(s,f){return s+f.demet},0);
@@ -1356,42 +1485,35 @@ async function handlePlan() {
 
   var planPrompt = "GÖREV: Çiçek gönderim planı oluştur.\n\n" +
     "KESİLEN ÇİÇEKLER:\n" + state.planFlowers.map(function(f){ return "- " + f.name + ": " + f.demet + " demet" }).join("\n") +
-    "\nTOPLAM: " + totalDemet + " demet, tahmini " + totalKutu + " kutu" +
-    "\n\nKUTU BAŞINA DEMET: " + state.planBoxSize +
+    "\nTOPLAM: " + totalDemet + " demet, " + totalKutu + " kutu (" + state.planBoxSize + " dm/kutu)" +
     "\n\nSTRATEJİ: " + strategyDesc[state.planStrategy] +
-    "\n\nŞUBE TREND VERİLERİ (seçili dönem + son 14 gün trendi):" + trendInfo +
-    "\n\nGEÇMİŞ PERFORMANS:\n" +
-    "Çiçek-Şube Kombinasyonları(dbn sıralı): " + hd.slice(0,25).map(function(h){return h.cicek+"→"+h.sube+":"+fmt(h.dbn)+"/dm,"+h.d+"dm"}).join("; ") +
-    "\n\n⚠ ÇOK ÖNEMLİ FİYATLANDIRMA KURALI:\n" +
-    "Karar verirken MUTLAK FİYAT her zaman TREND'den önemlidir!\n" +
-    "Örnek: Ayazağa 180₺/dm (düşüyor) vs Kadıköy 85₺/dm (yükseliyor) → Ayazağa HÂLÂ çok daha kârlı!\n" +
-    "Düşüyor diye yüksek fiyatlı şubeyi bırakma. Sadece düşüş ÇOOOK sert ise (%30+) azalt.\n" +
-    "Doğru yaklaşım: Fiyat × Hacim optimizasyonu yap. Yüksek fiyatlı şubeye ağırlık ver, trend de iyiyse bonus.\n\n" +
-    "KURALLAR:\n" +
-    "- Her çiçek için toplam demet sayısı girilen miktara EŞİT olmalı\n" +
-    "- Kutu başına " + state.planBoxSize + " demet\n" +
-    "- Bir kutuya FARKLI çiçekler karışık konulabilir\n" +
-    "- Aynı şubeye birden fazla kutu gidebilir\n" +
-    "- ÖNCE mutlak fiyata bak (yüksek fiyat = daha çok kutu), SONRA trende bak (yükseliş = ekstra kutu)\n" +
-    "- Her şube için neden seçtiğini VERİYE DAYANARAK açıkla (X₺/dm, trend)\n" +
-    "- Toplam tahmini net gelir hesapla\n" +
-    "- Somut kutu içerikleri ver, genel tavsiye verme\n" +
+    branchModeText +
+    "\n\nGÜNCEL VERİLER:" + trendInfo +
+    "\n\nKombo sıralaması: " + hd.slice(0,25).map(function(h){return h.cicek+"→"+h.sube+":"+fmt(h.dbn)+"/dm"}).join("; ") +
+    hist2025Text +
+    "\n\n🚨 ZORUNLU KURALLAR:\n" +
+    "1. EN PAHALI şubeye EN ÇOK kutu! Fiyat sıralamasına KESİNLİKLE uy.\n" +
+    "2. Her çiçeğin toplam demeti girilen miktara TAM EŞİT olmalı.\n" +
+    "3. Kutu başına " + state.planBoxSize + " demet. Karışık çiçek konulabilir.\n" +
+    "4. UCUZ şubeye PAHALI şubeden fazla kutu YASAK!\n" +
+    "5. Her kararı VERİ ile destekle (fiyat + trend).\n" +
+    "6. 2025 verisini REFERANS olarak kullan (%20 ağırlık) — asıl kararı güncel veriye göre ver.\n" +
     "\nÇIKTI FORMATI:\n" +
-    "Her şube için:\n" +
-    "📦 [ŞUBE ADI] - [KUTU SAYISI] kutu\n" +
-    "  Kutu 1: [DEMET] dm [ÇİÇEK1] + [DEMET] dm [ÇİÇEK2] (fiyat: X₺/dm, trend: +Y%)\n\n" +
-    "Sonunda:\n" +
-    "📊 ÖZET\n" +
-    "- Toplam kutu: X\n" +
-    "- Tahmini net gelir: X ₺\n" +
-    "- Risk notu ve alternatif öneri";
+    "📦 [ŞUBE] - [KUTU] kutu\n" +
+    "  Kutu X: [DM] dm [ÇİÇEK] (fiyat: X₺/dm, trend: +Y%)\n" +
+    (state.planBranchMode==="explore" ? "  🔍 DENEME kutularını ayrı belirt\n" : "") +
+    "\n📊 ÖZET: Toplam kutu, tahmini net gelir, risk notu";
 
   try {
     var resp = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        system: "Sen bir çiçek mezat lojistik uzmanısın. Kullanıcı Yalova'da çiçek üreticisi, Flora mezatına gönderiyor. Gider %20. Türkçe cevap ver. MUTLAK FİYAT her zaman TREND'den önemlidir — 180₺'den düşen şube 85₺'ye yükselen şubeden HÂLÂ daha kârlı! Düşüyor diye yüksek fiyatlı şubeyi bırakma. Somut kutu dağılımı yap. Bir kutuya " + state.planBoxSize + " demet, karışık çiçek konabilir. Kesin sayılar ver.",
+        system: "Sen çiçek mezat lojistik uzmanısın. Yalova'da üretici, Flora mezatına gönderiyor. Gider %20. Türkçe.\n\n" +
+          "1 NOLU KURAL: EN PAHALI şubeye EN ÇOK kutu! Ucuz şubeye pahalıdan fazla kutu YASAK.\n" +
+          "2 NOLU KURAL: Tüm şubelere kutu yapmak ZORUNLU DEĞİL — sadece kârlı olanlara yap.\n" +
+          "3 NOLU KURAL: 2025 verisi referans (%20 ağırlık), güncel veri ana karar (%80).\n" +
+          "Kutu başına " + state.planBoxSize + " demet, karışık çiçek olabilir. Kesin sayılar ver.",
         messages: [{ role: "user", content: planPrompt }]
       })
     });
