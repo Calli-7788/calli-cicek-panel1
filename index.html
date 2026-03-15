@@ -822,6 +822,14 @@ function render() {
 
     // Result
     if (state.planResult) {
+      // Tahmini net gelir kartı (kod hesaplaması)
+      if (state.planCodeEstimate > 0) {
+        html += `<div class="card" style="background:rgba(168,85,247,0.08);border-color:rgba(168,85,247,0.15);margin-bottom:10px;padding:14px;display:flex;justify-content:space-between;align-items:center">`;
+        html += `<div><div style="font-size:10px;color:#a78bfa;text-transform:uppercase;letter-spacing:0.5px">Tahmini Net Gelir</div><div style="font-size:22px;font-weight:800;color:#c4b5fd;margin-top:2px">${fmt(state.planCodeEstimate)}</div></div>`;
+        html += `<div style="text-align:right"><div style="font-size:10px;color:#64748b">Kutu: ${Math.ceil(state.planFlowers.reduce(function(s,f){return s+f.demet},0) / state.planBoxSize)}</div><div style="font-size:10px;color:#64748b">Demet: ${state.planFlowers.reduce(function(s,f){return s+f.demet},0)}</div></div>`;
+        html += `</div>`;
+      }
+
       html += `<div class="card" style="background:rgba(34,197,94,0.06);border-color:rgba(34,197,94,0.12)">`;
       html += `<div style="font-size:14px;font-weight:700;color:#4ade80;margin-bottom:10px">📦 Gönderim Planı</div>`;
       var resultHTML = esc(state.planResult).replace(/\*\*(.*?)\*\*/g, '<strong style="color:#f8fafc">$1</strong>').replace(/\n/g, '<br>');
@@ -1339,12 +1347,13 @@ function savePlan() {
     boxSize: state.planBoxSize,
     strategy: state.planStrategy,
     result: state.planResult,
-    estimatedNet: estimatedNet
+    estimatedNet: estimatedNet || state.planCodeEstimate || 0
   });
+  var finalEst = estimatedNet || state.planCodeEstimate || 0;
   localStorage.setItem("savedPlans", JSON.stringify(savedPlans));
-  alert(estimatedNet > 0
-    ? "Plan kaydedildi! Tahmini net: " + fmt(estimatedNet) + ". Gerçekleşen veriler gelince karşılaştırma yapılacak."
-    : "Plan kaydedildi! (Tahmini net gelir metinden çıkarılamadı — karşılaştırma yapılamayacak)");
+  alert(finalEst > 0
+    ? "Plan kaydedildi! Tahmini net: " + fmt(finalEst) + ". Gerçekleşen veriler gelince karşılaştırma yapılacak."
+    : "Plan kaydedildi!");
   render();
 }
 
@@ -1623,7 +1632,13 @@ async function handlePlan() {
     "📦 [ŞUBE] - [KUTU] kutu\n" +
     "  Kutu X: [DM] dm [ÇİÇEK] (fiyat: X₺/dm, son2mezat: X₺, trend: +Y%)\n" +
     (state.planBranchMode==="explore" ? "  🔍 DENEME kutularını ayrı belirt\n" : "") +
-    "\n📊 ÖZET: Toplam kutu, tahmini net gelir, risk notu, elenen şubeler ve nedenleri";
+    "\n📊 ÖZET (ZORUNLU — bu bölümü MUTLAKA yaz):\n" +
+    "- Toplam: X kutu (Y demet)\n" +
+    "- Dağılım: şube1 %X, şube2 %Y...\n" +
+    "- TAHMİNİ NET GELİR: XXXXX ₺\n" +
+    "  (Hesaplama: Her şubeye giden demet × o çiçeğin o şubedeki dm başı net fiyat, toplamı al)\n" +
+    "- Risk notu\n" +
+    "- Elenen şubeler ve nedenleri";
 
   try {
     var resp = await fetch("/api/chat", {
@@ -1669,6 +1684,32 @@ async function handlePlan() {
   } catch(e) {
     state.planResult = generateLocalPlan();
   }
+
+  // Kod tarafında kendi tahmini net gelir hesaplamamız — AI'dan bağımsız
+  if (state.planResult && !state.planResult.startsWith("⚠")) {
+    var codeEstimate = 0;
+    state.planFlowers.forEach(function(pf){
+      var flowerData = filtered.filter(function(r){ return r.c === pf.name });
+      var byBr = {};
+      flowerData.forEach(function(r){
+        if(!byBr[r.s]) byBr[r.s] = {net:0,d:0};
+        byBr[r.s].net += r.net; byBr[r.s].d += r.d;
+      });
+      // Her şubenin dm başı net × o şubeye giden demet oranı
+      var brList = Object.entries(byBr).map(function(e){
+        return {name:e[0], dbn: e[1].d>0 ? e[1].net/e[1].d : 0};
+      }).sort(function(a,b){return b.dbn - a.dbn});
+      // Basit tahmin: ağırlıklı ortalama fiyat × toplam demet
+      if (brList.length > 0) {
+        var weightedAvg = brList.reduce(function(s,b){return s+b.dbn},0) / brList.length;
+        codeEstimate += weightedAvg * pf.demet;
+      }
+    });
+    if (codeEstimate > 0) {
+      state.planCodeEstimate = codeEstimate;
+    }
+  }
+
   state.planLoading = false;
   render();
 }
