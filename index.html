@@ -270,7 +270,13 @@ let state = {
   expanded: {},
   aiQ: "", aiH: [], aiL: false,
   ddOpen: null,
-  chartOpen: null // "flower:NAME" or "branch:NAME"
+  chartOpen: null, // "flower:NAME" or "branch:NAME"
+  // Planner
+  planFlowers: [],
+  planBoxSize: 8,
+  planStrategy: "safe",
+  planResult: null,
+  planLoading: false
 };
 
 function setState(updates) {
@@ -600,7 +606,7 @@ function render() {
   html += `</div>`;
 
   // Tabs
-  const tabList = [{id:"panel",l:"Panel",i:"◉"},{id:"sube",l:"Şube Tablosu",i:"📋"},{id:"compare",l:"Karşılaştır",i:"⚡"},{id:"heat",l:"Kâr Haritası",i:"🔥"},{id:"tablo",l:"Tablo",i:"☰"},{id:"yoy",l:"Geçen Yıl",i:"📊"},{id:"rapor",l:"Rapor",i:"📄"},{id:"ai",l:"AI",i:"✦"}];
+  const tabList = [{id:"panel",l:"Panel",i:"◉"},{id:"plan",l:"Planlayıcı",i:"🎯"},{id:"sube",l:"Şube Tablosu",i:"📋"},{id:"compare",l:"Karşılaştır",i:"⚡"},{id:"heat",l:"Kâr Haritası",i:"🔥"},{id:"tablo",l:"Tablo",i:"☰"},{id:"yoy",l:"Geçen Yıl",i:"📊"},{id:"rapor",l:"Rapor",i:"📄"},{id:"ai",l:"AI",i:"✦"}];
   html += `<div class="tabs">`;
   tabList.forEach(t => {
     html += `<button class="tab-btn ${state.tab===t.id?'active':''}" onclick="setState({tab:'${t.id}',ddOpen:null})">${t.i} ${t.l}</button>`;
@@ -712,6 +718,79 @@ function render() {
       html += `</div>`;
     });
     if (stats.byB.length > 5) html += `<button class="show-more" onclick="toggleExp('branches')">${state.expanded.branches?'Daha az ▲':'Tüm şubeler ('+stats.byB.length+') ▼'}</button>`;
+  }
+
+  // ══ PLANLAYICI ══
+  if (state.tab === "plan") {
+    html += `<div class="sec-title">🎯 Gönderim Planlayıcı</div>`;
+    html += `<div style="font-size:12px;color:#94a3b8;margin-bottom:16px;margin-top:-6px">Kestiğin çiçekleri gir, AI en kârlı gönderim planını oluştursun</div>`;
+
+    // Step 1: Add flowers
+    html += `<div class="card" style="margin-bottom:12px">`;
+    html += `<div style="font-size:13px;font-weight:600;color:#f8fafc;margin-bottom:10px">1. Çiçekleri Ekle</div>`;
+
+    // Added flowers list
+    state.planFlowers.forEach((pf, i) => {
+      html += `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04)">`;
+      html += `<div style="flex:1;font-size:13px;color:#e2e8f0">${esc(pf.name)}</div>`;
+      html += `<div style="font-size:13px;color:#4ade80;font-weight:600">${pf.demet} dm</div>`;
+      html += `<button onclick="removePlanFlower(${i})" style="width:24px;height:24px;border-radius:6px;border:none;background:rgba(239,68,68,0.15);color:#f87171;font-size:12px;cursor:pointer">✕</button>`;
+      html += `</div>`;
+    });
+
+    // Add new flower form
+    html += `<div style="display:flex;gap:8px;margin-top:10px">`;
+    html += `<select id="planFlowerSelect" style="flex:1;padding:10px;border-radius:10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);color:#e5e7eb;font-size:12px"><option value="">Çiçek seç...</option>`;
+    FLOWERS.forEach(f => {
+      html += `<option value="${esc(f)}">${esc(f)}</option>`;
+    });
+    html += `</select>`;
+    html += `<input id="planDemetInput" type="number" placeholder="Demet" style="width:70px;padding:10px;border-radius:10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);color:#e5e7eb;font-size:12px;text-align:center">`;
+    html += `<button onclick="addPlanFlower()" style="padding:10px 14px;border-radius:10px;border:none;background:rgba(34,197,94,0.2);color:#4ade80;font-size:12px;font-weight:600;cursor:pointer">Ekle</button>`;
+    html += `</div></div>`;
+
+    // Step 2: Box size
+    html += `<div class="card" style="margin-bottom:12px">`;
+    html += `<div style="font-size:13px;font-weight:600;color:#f8fafc;margin-bottom:10px">2. Kutu Başına Demet</div>`;
+    html += `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">`;
+    [8, 10, 12, 20, 36, 40].forEach(n => {
+      html += `<button onclick="setState({planBoxSize:${n}})" style="padding:8px 12px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:${state.planBoxSize===n?'700':'400'};background:${state.planBoxSize===n?'rgba(34,197,94,0.2)':'rgba(255,255,255,0.06)'};color:${state.planBoxSize===n?'#4ade80':'#94a3b8'}">${n}</button>`;
+    });
+    html += `<input id="customBoxSize" type="number" placeholder="Diğer" value="${[8,10,12,20,36,40].includes(state.planBoxSize)?'':state.planBoxSize}" onchange="setState({planBoxSize:parseInt(this.value)||8})" style="width:65px;padding:8px;border-radius:8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);color:#e5e7eb;font-size:12px;text-align:center">`;
+    html += `</div></div>`;
+
+    // Step 3: Strategy
+    html += `<div class="card" style="margin-bottom:14px">`;
+    html += `<div style="font-size:13px;font-weight:600;color:#f8fafc;margin-bottom:10px">3. Gönderim Stratejisi</div>`;
+    var strategies = [
+      {id:"safe",l:"🛡 Güvenli",d:"Kanıtlanmış şubelere, düşük risk"},
+      {id:"aggressive",l:"🚀 Agresif",d:"En yüksek fiyat, yüksek risk"},
+      {id:"balanced",l:"⚖ Dengeli",d:"Kârlılık ve risk dengesi"},
+      {id:"explore",l:"🔍 Deneme",d:"Yeni şubelere de gönder"}
+    ];
+    strategies.forEach(s => {
+      html += `<div onclick="setState({planStrategy:'${s.id}'})" style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;cursor:pointer;margin-bottom:4px;background:${state.planStrategy===s.id?'rgba(34,197,94,0.1)':'transparent'};border:1px solid ${state.planStrategy===s.id?'rgba(34,197,94,0.2)':'rgba(255,255,255,0.04)'}">`;
+      html += `<div style="width:18px;height:18px;border-radius:50%;border:2px solid ${state.planStrategy===s.id?'#4ade80':'#475569'};display:flex;align-items:center;justify-content:center">${state.planStrategy===s.id?'<div style="width:8px;height:8px;border-radius:50%;background:#4ade80"></div>':''}</div>`;
+      html += `<div><div style="font-size:13px;color:${state.planStrategy===s.id?'#f8fafc':'#94a3b8'};font-weight:${state.planStrategy===s.id?'600':'400'}">${s.l}</div><div style="font-size:10px;color:#475569">${s.d}</div></div>`;
+      html += `</div>`;
+    });
+    html += `</div>`;
+
+    // Generate button
+    var canGenerate = state.planFlowers.length > 0;
+    html += `<button onclick="handlePlan()" ${canGenerate?'':'disabled'} style="width:100%;padding:14px;border-radius:12px;border:none;cursor:${canGenerate?'pointer':'not-allowed'};font-size:14px;font-weight:600;background:${canGenerate?'linear-gradient(135deg,#7c3aed,#6d28d9)':'rgba(255,255,255,0.06)'};color:${canGenerate?'#fff':'#475569'};margin-bottom:14px">${state.planLoading?'Analiz ediliyor...':'🎯 Gönderim Planı Oluştur'}</button>`;
+
+    // Result
+    if (state.planResult) {
+      html += `<div class="card" style="background:rgba(34,197,94,0.06);border-color:rgba(34,197,94,0.12)">`;
+      html += `<div style="font-size:14px;font-weight:700;color:#4ade80;margin-bottom:10px">📦 Gönderim Planı</div>`;
+      var resultHTML = esc(state.planResult).replace(/\*\*(.*?)\*\*/g, '<strong style="color:#f8fafc">$1</strong>').replace(/\n/g, '<br>');
+      html += `<div style="font-size:13px;color:#e2e8f0;line-height:1.7">${resultHTML}</div>`;
+      html += `</div>`;
+
+      // Copy plan button
+      html += `<button onclick="copyPlan()" style="width:100%;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,0.1);background:transparent;color:#94a3b8;font-size:12px;cursor:pointer;margin-top:8px">📋 Planı Kopyala</button>`;
+    }
   }
 
   // ══ ŞUBE TABLOSU ══
@@ -1080,6 +1159,171 @@ async function refreshData() {
   document.getElementById("app").innerHTML = '<div class="loading-screen"><div class="spinner"></div><div style="font-size:14px;margin-bottom:6px">Veriler yenileniyor...</div></div>';
   await loadAllData();
   render();
+}
+
+// ═══════════════ PLANNER FUNCTIONS ═══════════════
+function addPlanFlower() {
+  var sel = document.getElementById("planFlowerSelect");
+  var inp = document.getElementById("planDemetInput");
+  if (!sel || !inp || !sel.value || !inp.value) return;
+  var name = sel.value;
+  var demet = parseInt(inp.value) || 0;
+  if (demet <= 0) return;
+  // Check if already exists, update
+  var existing = state.planFlowers.find(f => f.name === name);
+  if (existing) existing.demet = demet;
+  else state.planFlowers.push({ name: name, demet: demet });
+  state.planResult = null;
+  render();
+}
+
+function removePlanFlower(index) {
+  state.planFlowers.splice(index, 1);
+  state.planResult = null;
+  render();
+}
+
+function copyPlan() {
+  if (state.planResult) {
+    navigator.clipboard.writeText(state.planResult.replace(/\*\*/g, "")).then(function(){
+      alert("Plan kopyalandı!");
+    });
+  }
+}
+
+async function handlePlan() {
+  if (state.planFlowers.length === 0 || state.planLoading) return;
+  state.planLoading = true;
+  state.planResult = null;
+  render();
+
+  var filtered = getFiltered();
+  var stats = calcStats(filtered);
+  var hd = getHeatData(filtered);
+  var bc = getBranchComp(filtered);
+
+  // Build trend data from selected date range + last 14 days for trend
+  var last14 = new Date(); last14.setDate(last14.getDate() - 14);
+  var last14str = last14.toISOString().split("T")[0];
+  var recentData = ALL_DATA.filter(function(r){ return r.t >= last14str });
+  var trendInfo = "\n\nSEÇİLİ DÖNEM: " + fD(state.sd) + " – " + fD(state.ed);
+
+  state.planFlowers.forEach(function(pf) {
+    // Current period data (filtered)
+    var flowerFiltered = filtered.filter(function(r){ return r.c === pf.name });
+    // Recent 14 days data for trend
+    var flowerRecent = recentData.filter(function(r){ return r.c === pf.name });
+
+    // Branch performance from filtered period
+    var byBranch = {};
+    flowerFiltered.forEach(function(r){
+      if(!byBranch[r.s]) byBranch[r.s] = {net:0,d:0,prices:[]};
+      byBranch[r.s].net += r.net;
+      byBranch[r.s].d += r.d;
+      byBranch[r.s].prices.push(r.dbn);
+    });
+
+    // Daily trend from recent data per branch
+    var dailyByBranch = {};
+    flowerRecent.forEach(function(r){
+      if(!dailyByBranch[r.s]) dailyByBranch[r.s] = {};
+      if(!dailyByBranch[r.s][r.t]) dailyByBranch[r.s][r.t] = {net:0,d:0};
+      dailyByBranch[r.s][r.t].net += r.net;
+      dailyByBranch[r.s][r.t].d += r.d;
+    });
+
+    var branchTrends = Object.entries(byBranch).map(function(e){
+      var avgDbn = e[1].d > 0 ? e[1].net / e[1].d : 0;
+      // Calculate trend from daily data
+      var dailyData = dailyByBranch[e[0]] || {};
+      var days = Object.entries(dailyData).sort(function(a,b){return a[0].localeCompare(b[0])});
+      var trendPct = 0;
+      if (days.length >= 2) {
+        var firstHalf = days.slice(0, Math.floor(days.length/2));
+        var secondHalf = days.slice(Math.floor(days.length/2));
+        var firstAvg = firstHalf.reduce(function(s,d){return s+(d[1].d>0?d[1].net/d[1].d:0)},0) / firstHalf.length;
+        var secondAvg = secondHalf.reduce(function(s,d){return s+(d[1].d>0?d[1].net/d[1].d:0)},0) / secondHalf.length;
+        trendPct = firstAvg > 0 ? ((secondAvg - firstAvg) / firstAvg * 100) : 0;
+      }
+      var trendDir = trendPct > 3 ? "YÜKSELIYOR" : trendPct < -3 ? "DÜŞÜYOR" : "SABİT";
+      return e[0] + ":" + fmt(avgDbn) + "/dm," + e[1].d + "dm," + trendDir + "(" + (trendPct>0?"+":"") + trendPct.toFixed(0) + "%)";
+    }).sort(function(a,b){ return b.split(":")[1] > a.split(":")[1] ? 1 : -1 });
+
+    trendInfo += "\n" + pf.name + " şube performansı: " + branchTrends.join("; ");
+  });
+
+  var strategyDesc = {
+    safe: "GÜVENLİ strateji: Kanıtlanmış, stabil fiyat veren şubelere öncelik ver. Risk alma. Geçmiş performansı yüksek olan yerlere gönder.",
+    aggressive: "AGRESİF strateji: En yüksek fiyatı veren şubelere ağırlık ver, düşük fiyatlı şubeleri tamamen atla. Kâr maksimizasyonu.",
+    balanced: "DENGELİ strateji: Kârlılık ve risk arasında denge kur. Ana şubelere ağırlık ver ama çeşitlendir.",
+    explore: "DENEME stratejisi: Az gönderim yapılan ama potansiyel görülen şubelere de kutu ayır. Yeni fırsatları keşfet."
+  };
+
+  var planPrompt = "GÖREV: Çiçek gönderim planı oluştur.\n\n" +
+    "KESİLEN ÇİÇEKLER:\n" + state.planFlowers.map(function(f){ return "- " + f.name + ": " + f.demet + " demet" }).join("\n") +
+    "\n\nKUTU BAŞINA DEMET: " + state.planBoxSize +
+    "\n\nSTRATEJİ: " + strategyDesc[state.planStrategy] +
+    "\n\nŞUBE TREND VERİLERİ (seçili dönem + son 14 gün trendi):" + trendInfo +
+    "\n\nGEÇMİŞ PERFORMANS:\n" +
+    "Çiçek-Şube Kombinasyonları(dbn sıralı): " + hd.slice(0,20).map(function(h){return h.cicek+"→"+h.sube+":"+fmt(h.dbn)+"/dm,"+h.d+"dm"}).join("; ") +
+    "\n\nKURALLAR:\n" +
+    "- Her çiçek için toplam demet sayısı girilen miktara eşit olmalı\n" +
+    "- Kutu başına " + state.planBoxSize + " demet olacak şekilde tam kutular oluştur\n" +
+    "- Her şube için kaç kutu ve hangi çiçekten kaç demet gideceğini yaz\n" +
+    "- Neden o şubeyi seçtiğini kısa açıkla (fiyat trendi, geçmiş performans)\n" +
+    "- Toplam tahmini net gelir hesapla\n" +
+    "- ÖNEMLİ: Şube bazında somut kutu sayıları ver, genel tavsiye verme\n" +
+    "\nÇIKTI FORMATI:\n" +
+    "Her şube için:\n" +
+    "📦 [ŞUBE ADI] - [KUTU SAYISI] kutu\n" +
+    "  - [ÇİÇEK]: [DEMET] dm (sebep)\n" +
+    "Sonra toplam özet ve tahmini gelir.";
+
+  try {
+    var resp = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        system: "Sen bir çiçek mezat lojistik uzmanısın. Kullanıcı Yalova'da çiçek üreticisi, Flora mezatına gönderiyor. Gider %20. Türkçe cevap ver. VERİLERE DAYANARAK somut kutu dağılımı yap. Her kutuya " + state.planBoxSize + " demet giriyor. Kesin sayılar ver, belirsiz ifadeler kullanma.",
+        messages: [{ role: "user", content: planPrompt }]
+      })
+    });
+    var data = await resp.json();
+    if (data.content && data.content.length > 0) {
+      state.planResult = data.content.map(function(b){ return b.text || "" }).join("\n");
+    } else if (data.error) {
+      state.planResult = "⚠ Hata: " + (data.error.message || JSON.stringify(data.error));
+    } else {
+      state.planResult = generateLocalPlan();
+    }
+  } catch(e) {
+    state.planResult = generateLocalPlan();
+  }
+  state.planLoading = false;
+  render();
+}
+
+function generateLocalPlan() {
+  var plan = "📦 GÖNDERİM PLANI (Yerel Analiz)\n\n";
+  var hd = getHeatData(getFiltered());
+
+  state.planFlowers.forEach(function(pf) {
+    var combos = hd.filter(function(h){ return h.cicek === pf.name }).slice(0, 5);
+    var remaining = pf.demet;
+    plan += "**" + pf.name + "** (" + pf.demet + " demet):\n";
+    combos.forEach(function(c) {
+      if (remaining <= 0) return;
+      var boxes = Math.min(Math.ceil(remaining / state.planBoxSize), 2);
+      var dm = Math.min(boxes * state.planBoxSize, remaining);
+      plan += "  📦 " + c.sube + ": " + boxes + " kutu (" + dm + " dm) — " + fmt(c.dbn) + "/dm\n";
+      remaining -= dm;
+    });
+    if (remaining > 0) plan += "  📦 Diğer: " + Math.ceil(remaining / state.planBoxSize) + " kutu (" + remaining + " dm)\n";
+    plan += "\n";
+  });
+
+  plan += "Not: Bu yerel analiz. API bağlantısı olduğunda daha detaylı plan alabilirsin.";
+  return plan;
 }
 
 function setPreset(p) {
