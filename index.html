@@ -832,7 +832,7 @@ function render() {
         html += `<div><div style="font-size:10px;color:#a78bfa;text-transform:uppercase;letter-spacing:0.5px">Tahmini Net Gelir</div><div style="font-size:22px;font-weight:800;color:#c4b5fd;margin-top:2px">${fmt(state.planCodeEstimate)}</div></div>`;
         html += `<div style="text-align:right"><div style="font-size:10px;color:#64748b">${totalKt} kutu · ${totalDm} dm</div><div style="font-size:10px;color:#64748b">Ort: ${fmt(avgPerDm)}/dm</div></div>`;
         html += `</div>`;
-        html += `<div style="margin-top:8px;font-size:10px;color:#475569">Hesaplama: Her şubenin fiyatı × o şubeye giden demet oranı (fiyata orantılı dağılım)</div>`;
+        html += `<div style="margin-top:8px;font-size:10px;color:#475569">Trend düzeltmeli: Son 2 mezat fiyatı %70 + genel ortalama %30 ağırlıkla hesaplandı</div>`;
         html += `</div>`;
       }
 
@@ -1691,30 +1691,54 @@ async function handlePlan() {
     state.planResult = generateLocalPlan();
   }
 
-  // Kod tarafında kendi tahmini net gelir hesaplamamız — AI'dan bağımsız
+  // Kod tarafında kendi tahmini net gelir hesaplamamız — trend düzeltmeli
   if (state.planResult && !state.planResult.startsWith("⚠")) {
     var codeEstimate = 0;
+    var last14 = new Date(); last14.setDate(last14.getDate() - 14);
+    var last14str = last14.toISOString().split("T")[0];
+
     state.planFlowers.forEach(function(pf){
       var flowerData = filtered.filter(function(r){ return r.c === pf.name });
+      var flowerRecent = ALL_DATA.filter(function(r){ return r.c === pf.name && r.t >= last14str });
+
       var byBr = {};
       flowerData.forEach(function(r){
         if(!byBr[r.s]) byBr[r.s] = {net:0,d:0};
         byBr[r.s].net += r.net; byBr[r.s].d += r.d;
       });
-      var brList = Object.entries(byBr).map(function(e){
-        return {name:e[0], dbn: e[1].d>0 ? e[1].net/e[1].d : 0};
-      }).sort(function(a,b){return b.dbn - a.dbn});
 
-      // Fiyata orantılı ağırlıklı dağılım: pahalı şube daha çok demet alır
+      var brList = Object.entries(byBr).map(function(e){
+        var avgDbn = e[1].d > 0 ? e[1].net / e[1].d : 0;
+
+        // Son 2 mezat gününü bul (bu çiçek × bu şube)
+        var brRecent = flowerRecent.filter(function(r){ return r.s === e[0] });
+        var uniqueDays = [...new Set(brRecent.map(function(r){return r.t}))].sort().reverse();
+        var last2Days = uniqueDays.slice(0, 2);
+        var last2Records = brRecent.filter(function(r){ return last2Days.includes(r.t) });
+        var last2Net = last2Records.reduce(function(s,r){return s+r.net},0);
+        var last2D = last2Records.reduce(function(s,r){return s+r.d},0);
+        var last2Dbn = last2D > 0 ? last2Net / last2D : null;
+
+        // Trend düzeltmeli fiyat: %70 son 2 mezat + %30 genel ortalama
+        var trendAdjustedPrice;
+        if (last2Dbn !== null && last2Dbn > 0) {
+          trendAdjustedPrice = last2Dbn * 0.7 + avgDbn * 0.3;
+        } else {
+          trendAdjustedPrice = avgDbn; // Son 2 mezat yoksa ortalamayı kullan
+        }
+
+        return {name:e[0], dbn:avgDbn, adjustedDbn:trendAdjustedPrice, last2Dbn:last2Dbn};
+      }).sort(function(a,b){return b.adjustedDbn - a.adjustedDbn});
+
+      // Fiyata orantılı ağırlıklı dağılım (trend düzeltmeli fiyatla)
       if (brList.length > 0) {
-        var totalDbn = brList.reduce(function(s,b){return s+b.dbn},0);
+        var totalAdj = brList.reduce(function(s,b){return s+b.adjustedDbn},0);
         var remaining = pf.demet;
         brList.forEach(function(b, idx){
-          // Her şubenin payı fiyatıyla orantılı
-          var share = totalDbn > 0 ? (b.dbn / totalDbn) : (1 / brList.length);
+          var share = totalAdj > 0 ? (b.adjustedDbn / totalAdj) : (1 / brList.length);
           var demetForBranch = idx < brList.length - 1 ? Math.round(pf.demet * share) : remaining;
           demetForBranch = Math.min(demetForBranch, remaining);
-          codeEstimate += b.dbn * demetForBranch;
+          codeEstimate += b.adjustedDbn * demetForBranch;
           remaining -= demetForBranch;
         });
       }
