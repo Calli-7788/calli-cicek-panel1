@@ -1296,16 +1296,40 @@ function copyPlan() {
 function savePlan() {
   if (!state.planResult) return;
   var savedPlans = JSON.parse(localStorage.getItem("savedPlans") || "[]");
-  // Try to extract estimated net from plan text
-  var estMatch = state.planResult.match(/net gelir[:\s]*([0-9.,]+)/i);
-  var estimatedNet = estMatch ? parseFloat(estMatch[1].replace(/\./g,"").replace(",",".")) : 0;
-  // If couldn't find, try another pattern
-  if (!estimatedNet) {
-    var estMatch2 = state.planResult.match(/(\d[\d.,]*)\s*₺/g);
-    if (estMatch2 && estMatch2.length > 0) {
-      var lastNum = estMatch2[estMatch2.length - 1];
-      estimatedNet = parseFloat(lastNum.replace(/[^\d.,]/g,"").replace(/\./g,"").replace(",",".")) || 0;
+
+  // Extract estimated net from plan text — multiple patterns
+  var estimatedNet = 0;
+  var text = state.planResult;
+
+  // Pattern 1: "net gelir: ~22.400₺" or "Net Gelir: 22.400 ₺" or "net gelir ~22400"
+  var patterns = [
+    /net\s*gelir[:\s~]*([0-9][0-9.,]*)\s*₺?/i,
+    /tahmini[:\s~]*([0-9][0-9.,]*)\s*₺/i,
+    /toplam[:\s~]*([0-9][0-9.,]*)\s*₺/i,
+    /gelir[:\s~]*([0-9][0-9.,]*)\s*₺/i
+  ];
+
+  for (var i = 0; i < patterns.length; i++) {
+    var m = text.match(patterns[i]);
+    if (m) {
+      // "22.400" → 22400, "22,400" → 22400
+      var numStr = m[1].replace(/\./g, "").replace(",", ".");
+      var val = parseFloat(numStr);
+      // Net gelir en az 100₺ olmalı, aksi halde yanlış yakalamış
+      if (val >= 100) { estimatedNet = val; break; }
     }
+  }
+
+  // Fallback: tüm ₺ sayılarını bul, en büyüğünü al (1000₺'den büyük olanlar arasından)
+  if (!estimatedNet) {
+    var allNums = [];
+    var numRegex = /([0-9][0-9.,]*)\s*₺/g;
+    var match;
+    while ((match = numRegex.exec(text)) !== null) {
+      var v = parseFloat(match[1].replace(/\./g, "").replace(",", "."));
+      if (v >= 1000) allNums.push(v);
+    }
+    if (allNums.length > 0) estimatedNet = Math.max.apply(null, allNums);
   }
 
   savedPlans.push({
@@ -1318,7 +1342,9 @@ function savePlan() {
     estimatedNet: estimatedNet
   });
   localStorage.setItem("savedPlans", JSON.stringify(savedPlans));
-  alert("Plan kaydedildi! Gerçekleşen sonuçlar veriye düştüğünde karşılaştırma otomatik görünecek.");
+  alert(estimatedNet > 0
+    ? "Plan kaydedildi! Tahmini net: " + fmt(estimatedNet) + ". Gerçekleşen veriler gelince karşılaştırma yapılacak."
+    : "Plan kaydedildi! (Tahmini net gelir metinden çıkarılamadı — karşılaştırma yapılamayacak)");
   render();
 }
 
