@@ -824,9 +824,15 @@ function render() {
     if (state.planResult) {
       // Tahmini net gelir kartı (kod hesaplaması)
       if (state.planCodeEstimate > 0) {
-        html += `<div class="card" style="background:rgba(168,85,247,0.08);border-color:rgba(168,85,247,0.15);margin-bottom:10px;padding:14px;display:flex;justify-content:space-between;align-items:center">`;
+        var totalDm = state.planFlowers.reduce(function(s,f){return s+f.demet},0);
+        var totalKt = Math.ceil(totalDm / state.planBoxSize);
+        var avgPerDm = totalDm > 0 ? state.planCodeEstimate / totalDm : 0;
+        html += `<div class="card" style="background:rgba(168,85,247,0.08);border-color:rgba(168,85,247,0.15);margin-bottom:10px;padding:14px">`;
+        html += `<div style="display:flex;justify-content:space-between;align-items:center">`;
         html += `<div><div style="font-size:10px;color:#a78bfa;text-transform:uppercase;letter-spacing:0.5px">Tahmini Net Gelir</div><div style="font-size:22px;font-weight:800;color:#c4b5fd;margin-top:2px">${fmt(state.planCodeEstimate)}</div></div>`;
-        html += `<div style="text-align:right"><div style="font-size:10px;color:#64748b">Kutu: ${Math.ceil(state.planFlowers.reduce(function(s,f){return s+f.demet},0) / state.planBoxSize)}</div><div style="font-size:10px;color:#64748b">Demet: ${state.planFlowers.reduce(function(s,f){return s+f.demet},0)}</div></div>`;
+        html += `<div style="text-align:right"><div style="font-size:10px;color:#64748b">${totalKt} kutu · ${totalDm} dm</div><div style="font-size:10px;color:#64748b">Ort: ${fmt(avgPerDm)}/dm</div></div>`;
+        html += `</div>`;
+        html += `<div style="margin-top:8px;font-size:10px;color:#475569">Hesaplama: Her şubenin fiyatı × o şubeye giden demet oranı (fiyata orantılı dağılım)</div>`;
         html += `</div>`;
       }
 
@@ -1695,14 +1701,22 @@ async function handlePlan() {
         if(!byBr[r.s]) byBr[r.s] = {net:0,d:0};
         byBr[r.s].net += r.net; byBr[r.s].d += r.d;
       });
-      // Her şubenin dm başı net × o şubeye giden demet oranı
       var brList = Object.entries(byBr).map(function(e){
         return {name:e[0], dbn: e[1].d>0 ? e[1].net/e[1].d : 0};
       }).sort(function(a,b){return b.dbn - a.dbn});
-      // Basit tahmin: ağırlıklı ortalama fiyat × toplam demet
+
+      // Fiyata orantılı ağırlıklı dağılım: pahalı şube daha çok demet alır
       if (brList.length > 0) {
-        var weightedAvg = brList.reduce(function(s,b){return s+b.dbn},0) / brList.length;
-        codeEstimate += weightedAvg * pf.demet;
+        var totalDbn = brList.reduce(function(s,b){return s+b.dbn},0);
+        var remaining = pf.demet;
+        brList.forEach(function(b, idx){
+          // Her şubenin payı fiyatıyla orantılı
+          var share = totalDbn > 0 ? (b.dbn / totalDbn) : (1 / brList.length);
+          var demetForBranch = idx < brList.length - 1 ? Math.round(pf.demet * share) : remaining;
+          demetForBranch = Math.min(demetForBranch, remaining);
+          codeEstimate += b.dbn * demetForBranch;
+          remaining -= demetForBranch;
+        });
       }
     });
     if (codeEstimate > 0) {
