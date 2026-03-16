@@ -889,7 +889,7 @@ function render() {
             html += `<div><div style="font-size:9px;color:#64748b">Fark</div><div style="font-size:14px;font-weight:700;color:${diff>=0?'#34d399':'#f87171'}">${diff>=0?'+':''}${fmt(diff)} (${diffPct>=0?'+':''}${diffPct.toFixed(0)}%)</div></div>`;
             html += `</div>`;
             if (dayTotalNet > actualNet) {
-              html += `<div style="font-size:10px;color:#475569;padding:2px 0">Günün toplam net geliri: <span style="color:#94a3b8">${fmt(dayTotalNet)}</span> (tüm çiçekler dahil)</div>`;
+              html += `<div style="font-size:11px;color:#64748b;padding:4px 0;border-top:1px solid rgba(255,255,255,0.04);margin-top:4px">Günün toplam net: <span style="color:#4ade80;font-weight:600">${fmt(dayTotalNet)}</span> <span style="color:#475569">(tüm çiçekler)</span></div>`;
             }
           } else {
             html += `<div><div style="font-size:9px;color:#64748b">Gerçekleşen</div><div style="font-size:12px;color:#475569">Henüz veri yok</div></div>`;
@@ -899,7 +899,8 @@ function render() {
 
         // Toggle details
         if (state.expanded["plan_"+realIdx]) {
-          html += `<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.04);font-size:11px;color:#94a3b8;white-space:pre-wrap;max-height:200px;overflow-y:auto">${esc(plan.result).substring(0,500)}${plan.result.length>500?'...':''}</div>`;
+          var detailHTML = esc(plan.result).replace(/\*\*(.*?)\*\*/g, '<strong style="color:#f8fafc">$1</strong>').replace(/\n/g, '<br>');
+          html += `<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.04);font-size:11px;color:#94a3b8;max-height:60vh;overflow-y:auto;-webkit-overflow-scrolling:touch">${detailHTML}</div>`;
         }
         html += `<button onclick="toggleExp('plan_${realIdx}')" style="background:none;border:none;color:#475569;font-size:10px;cursor:pointer;padding-top:4px">${state.expanded["plan_"+realIdx]?'Detayı gizle ▲':'Detayı göster ▼'}</button>`;
         html += `</div>`;
