@@ -829,10 +829,10 @@ function render() {
         var avgPerDm = totalDm > 0 ? state.planCodeEstimate / totalDm : 0;
         html += `<div class="card" style="background:rgba(168,85,247,0.08);border-color:rgba(168,85,247,0.15);margin-bottom:10px;padding:14px">`;
         html += `<div style="display:flex;justify-content:space-between;align-items:center">`;
-        html += `<div><div style="font-size:10px;color:#a78bfa;text-transform:uppercase;letter-spacing:0.5px">Tahmini Net Gelir</div><div style="font-size:22px;font-weight:800;color:#c4b5fd;margin-top:2px">${fmt(state.planCodeEstimate)}</div></div>`;
+        html += `<div><div style="font-size:10px;color:#a78bfa;text-transform:uppercase;letter-spacing:0.5px">🔮 Tahmini Net Gelir (trend bazlı)</div><div style="font-size:22px;font-weight:800;color:#c4b5fd;margin-top:2px">${fmt(state.planCodeEstimate)}</div></div>`;
         html += `<div style="text-align:right"><div style="font-size:10px;color:#64748b">${totalKt} kutu · ${totalDm} dm</div><div style="font-size:10px;color:#64748b">Ort: ${fmt(avgPerDm)}/dm</div></div>`;
         html += `</div>`;
-        html += `<div style="margin-top:8px;font-size:10px;color:#475569">Trend düzeltmeli: Son 2 mezat fiyatı %70 + genel ortalama %30 ağırlıkla hesaplandı</div>`;
+        html += `<div style="margin-top:8px;font-size:10px;color:#475569">Son 2 mezat %70 + genel ort %30 ile hesaplandı. Paneldeki net gelirden farklı olabilir — bu gelecek tahminidir, geçmiş gerçekleşme değil.</div>`;
         html += `</div>`;
       }
 
@@ -871,7 +871,7 @@ function render() {
           html += `<div><div style="font-size:9px;color:#64748b">Tahmini Net</div><div style="font-size:14px;font-weight:700;color:#a78bfa">${fmt(plan.estimatedNet)}</div></div>`;
 
           if (hasActual) {
-            // Calculate actual results for the planned flowers
+            // Sadece planlanan çiçeklerin gerçekleşen net geliri
             var actualNet = 0;
             var actualDemet = 0;
             plan.flowers.forEach(function(pf) {
@@ -879,11 +879,18 @@ function render() {
               actualNet += flowerActual.reduce(function(s,r){return s+r.net},0);
               actualDemet += flowerActual.reduce(function(s,r){return s+r.d},0);
             });
+            // Günün toplam net geliri (tüm çiçekler)
+            var dayTotalNet = actualData.reduce(function(s,r){return s+r.net},0);
+
             var diff = actualNet - plan.estimatedNet;
             var diffPct = plan.estimatedNet > 0 ? (diff / plan.estimatedNet * 100) : 0;
 
-            html += `<div><div style="font-size:9px;color:#64748b">Gerçekleşen</div><div style="font-size:14px;font-weight:700;color:#4ade80">${fmt(actualNet)}</div></div>`;
+            html += `<div><div style="font-size:9px;color:#64748b">Gerçekleşen</div><div style="font-size:14px;font-weight:700;color:#4ade80">${fmt(actualNet)}</div><div style="font-size:9px;color:#475569">planlanan çiçekler</div></div>`;
             html += `<div><div style="font-size:9px;color:#64748b">Fark</div><div style="font-size:14px;font-weight:700;color:${diff>=0?'#34d399':'#f87171'}">${diff>=0?'+':''}${fmt(diff)} (${diffPct>=0?'+':''}${diffPct.toFixed(0)}%)</div></div>`;
+            html += `</div>`;
+            if (dayTotalNet > actualNet) {
+              html += `<div style="font-size:10px;color:#475569;padding:2px 0">Günün toplam net geliri: <span style="color:#94a3b8">${fmt(dayTotalNet)}</span> (tüm çiçekler dahil)</div>`;
+            }
           } else {
             html += `<div><div style="font-size:9px;color:#64748b">Gerçekleşen</div><div style="font-size:12px;color:#475569">Henüz veri yok</div></div>`;
           }
@@ -1311,40 +1318,9 @@ function savePlan() {
   if (!state.planResult) return;
   var savedPlans = JSON.parse(localStorage.getItem("savedPlans") || "[]");
 
-  // Extract estimated net from plan text — multiple patterns
-  var estimatedNet = 0;
-  var text = state.planResult;
-
-  // Pattern 1: "net gelir: ~22.400₺" or "Net Gelir: 22.400 ₺" or "net gelir ~22400"
-  var patterns = [
-    /net\s*gelir[:\s~]*([0-9][0-9.,]*)\s*₺?/i,
-    /tahmini[:\s~]*([0-9][0-9.,]*)\s*₺/i,
-    /toplam[:\s~]*([0-9][0-9.,]*)\s*₺/i,
-    /gelir[:\s~]*([0-9][0-9.,]*)\s*₺/i
-  ];
-
-  for (var i = 0; i < patterns.length; i++) {
-    var m = text.match(patterns[i]);
-    if (m) {
-      // "22.400" → 22400, "22,400" → 22400
-      var numStr = m[1].replace(/\./g, "").replace(",", ".");
-      var val = parseFloat(numStr);
-      // Net gelir en az 100₺ olmalı, aksi halde yanlış yakalamış
-      if (val >= 100) { estimatedNet = val; break; }
-    }
-  }
-
-  // Fallback: tüm ₺ sayılarını bul, en büyüğünü al (1000₺'den büyük olanlar arasından)
-  if (!estimatedNet) {
-    var allNums = [];
-    var numRegex = /([0-9][0-9.,]*)\s*₺/g;
-    var match;
-    while ((match = numRegex.exec(text)) !== null) {
-      var v = parseFloat(match[1].replace(/\./g, "").replace(",", "."));
-      if (v >= 1000) allNums.push(v);
-    }
-    if (allNums.length > 0) estimatedNet = Math.max.apply(null, allNums);
-  }
+  // Öncelik: Kodun kendi hesapladığı tahmini kullan (daha güvenilir)
+  // AI'nın yazdığı rakam brüt/net karışıklığına yol açıyor
+  var estimatedNet = state.planCodeEstimate || 0;
 
   savedPlans.push({
     date: new Date().toISOString().split("T")[0],
@@ -1353,12 +1329,11 @@ function savePlan() {
     boxSize: state.planBoxSize,
     strategy: state.planStrategy,
     result: state.planResult,
-    estimatedNet: estimatedNet || state.planCodeEstimate || 0
+    estimatedNet: estimatedNet
   });
-  var finalEst = estimatedNet || state.planCodeEstimate || 0;
   localStorage.setItem("savedPlans", JSON.stringify(savedPlans));
-  alert(finalEst > 0
-    ? "Plan kaydedildi! Tahmini net: " + fmt(finalEst) + ". Gerçekleşen veriler gelince karşılaştırma yapılacak."
+  alert(estimatedNet > 0
+    ? "Plan kaydedildi! Tahmini net: " + fmt(estimatedNet)
     : "Plan kaydedildi!");
   render();
 }
@@ -1625,15 +1600,16 @@ async function handlePlan() {
     "\n\nKombo sıralaması: " + hd.slice(0,25).map(function(h){return h.cicek+"→"+h.sube+":"+fmt(h.dbn)+"/dm"}).join("; ") +
     hist2025Text +
     "\n\n🚨 ZORUNLU KURALLAR:\n" +
-    "1. ❌ GÖNDERME etiketli çiçek-şube kombinasyonlarına KESİNLİKLE kutu yapma! Son 2 mezat ortalamanın %30+ altında.\n" +
-    "2. ⚠️ AZALT etiketli kombinasyonlara önerilen yüzdenin YARISINI ver. Son 2 mezat ortalamanın %15-30 altında.\n" +
+    "1. ❌ GÖNDERME etiketli çiçek-şube kombinasyonlarına KESİNLİKLE kutu yapma!\n" +
+    "2. ⚠️ AZALT etiketli kombinasyonlara önerilen yüzdenin YARISINI ver.\n" +
     "3. ✅ GÖNDER etiketli kombinasyonlara önerilen yüzdeye göre dağıt.\n" +
-    "4. EN PAHALI şubeye EN ÇOK kutu! Fiyat sıralamasına uy.\n" +
-    "5. Her çiçeğin toplam demeti girilen miktara TAM EŞİT olmalı.\n" +
-    "6. Kutu başına " + state.planBoxSize + " demet. Karışık çiçek konulabilir.\n" +
+    "4. EN PAHALI şubeye EN ÇOK kutu!\n" +
+    "5. 🚨🚨🚨 HER ÇİÇEĞİN TOPLAM DEMETİ GİRİLEN MİKTARA BİREBİR EŞİT OLMALI! KALAN DEMET BIRAKMAK YASAK! Eğer kutulara tam sığmıyorsa son kutuyu eksik doldur veya en iyi şubeye ekstra kutu yap. Hiçbir demet boşta kalamaz!\n" +
+    "6. Kutu başına " + state.planBoxSize + " demet. Karışık çiçek konulabilir. Son kutu tam dolmak zorunda DEĞİL.\n" +
     "7. UCUZ şubeye PAHALI şubeden fazla kutu YASAK!\n" +
     "8. 2025 verisi referans (%20 ağırlık), güncel veri ana karar (%80).\n" +
-    "9. Tüm şubelere kutu yapmak ZORUNLU DEĞİL — sadece ✅ ve ⚠️ olanlara yap.\n" +
+    "9. Tüm şubelere kutu yapmak ZORUNLU DEĞİL.\n" +
+    "10. DAĞILIM DETAYI bölümünde her çiçeğin şubelere dağılımını yaz ve TOPLAMI KONTROL ET. Toplam girilen demete eşit değilse DÜZELT!\n" +
     "\nÇIKTI FORMATI:\n" +
     "📦 [ŞUBE] - [KUTU] kutu\n" +
     "  Kutu X: [DM] dm [ÇİÇEK] (fiyat: X₺/dm, son2mezat: X₺, trend: +Y%)\n" +
