@@ -356,13 +356,28 @@ function calcStats(filtered) {
 // ═══════════════ PDF REPORT DATA (YENİ) ═══════════════
 function getPDFReportData(filtered) {
   const stats = calcStats(filtered);
-  const dc = Math.max(1, Math.round((new Date(state.ed) - new Date(state.sd)) / 864e5) + 1);
-  const pe = new Date(new Date(state.sd).getTime() - 864e5);
-  const ps = new Date(pe.getTime() - (dc - 1) * 864e5);
-  const prevSD = ps.toISOString().split("T")[0];
-  const prevED = pe.toISOString().split("T")[0];
+
+  // Seçili dönemdeki gerçek mezat günlerini bul
+  const currentMezatDays = [...new Set(filtered.map(r => r.t))].sort();
+  const mezatCount = currentMezatDays.length;
+
+  // Seçili dönemden ÖNCE olan tüm mezat günlerini bul (filtre uygulanmış)
+  const beforeStart = state.sd;
+  const allPrevDays = [...new Set(
+    ALL_DATA.filter(r =>
+      r.t < beforeStart &&
+      (!state.sf || (state.sf.startsWith("GRUP:") ? r.c.startsWith(state.sf.replace("GRUP:", "")) : r.c === state.sf)) &&
+      (!state.sb || r.s === state.sb)
+    ).map(r => r.t)
+  )].sort().reverse(); // en yeniden eskiye
+
+  // Önceki mezat günlerinden aynı sayıda al
+  const prevMezatDays = allPrevDays.slice(0, mezatCount);
+  const prevSD = prevMezatDays.length > 0 ? prevMezatDays[prevMezatDays.length - 1] : "";
+  const prevED = prevMezatDays.length > 0 ? prevMezatDays[0] : "";
+
   const prevData = ALL_DATA.filter(r =>
-    r.t >= prevSD && r.t <= prevED &&
+    prevMezatDays.includes(r.t) &&
     (!state.sf || (state.sf.startsWith("GRUP:") ? r.c.startsWith(state.sf.replace("GRUP:", "")) : r.c === state.sf)) &&
     (!state.sb || r.s === state.sb)
   );
@@ -404,7 +419,7 @@ function getPDFReportData(filtered) {
   const prevTotalNet = prevData.reduce((s, r) => s + r.net, 0);
   const prevTotalD = prevData.reduce((s, r) => s + r.d, 0);
   const prevTotalDbn = prevTotalD > 0 ? prevTotalNet / prevTotalD : 0;
-  return { stats, branchList, prevSD, prevED, prevTotalNet, prevTotalD, prevTotalDbn, hasPrev: prevData.length > 0 };
+  return { stats, branchList, prevSD, prevED, prevTotalNet, prevTotalD, prevTotalDbn, hasPrev: prevData.length > 0, currentMezatCount: mezatCount, prevMezatCount: prevMezatDays.length };
 }
 
 function getAlerts(filtered) {
@@ -1232,7 +1247,7 @@ function render() {
     if (rData.hasPrev) {
       const totalNetCh = rData.prevTotalNet > 0 ? ((rStats.tn - rData.prevTotalNet) / rData.prevTotalNet * 100) : null;
       html += `<div style="padding:8px 10px;border-radius:8px;background:rgba(96,165,250,0.06);border:1px solid rgba(96,165,250,0.1);margin-bottom:12px;font-size:11px;color:#93c5fd">`;
-      html += `📊 Önceki dönem (${fD(rData.prevSD)}–${fD(rData.prevED)}): ${fmt(rData.prevTotalNet)} net`;
+      html += `📊 Önceki ${rData.prevMezatCount} mezat (${fD(rData.prevSD)}–${fD(rData.prevED)}): ${fmt(rData.prevTotalNet)} net`;
       if (totalNetCh != null) html += ` → <span style="color:${totalNetCh>0?'#34d399':'#f87171'};font-weight:600">${totalNetCh>0?'+':''}${totalNetCh.toFixed(1)}%</span>`;
       html += `</div>`;
     }
@@ -1905,7 +1920,7 @@ function generatePDF() {
   const rData = getPDFReportData(filtered);
   const stats = rData.stats;
   const dateLabel = state.sd !== state.ed ? fD(state.sd) + " – " + fD(state.ed) : fDF(state.sd);
-  const prevLabel = rData.hasPrev ? fD(rData.prevSD) + " – " + fD(rData.prevED) : "";
+  const prevLabel = rData.hasPrev ? rData.prevMezatCount + " mezat: " + fD(rData.prevSD) + " – " + fD(rData.prevED) : "";
 
   // Build HTML for PDF
   let pdfHTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
@@ -1932,7 +1947,7 @@ function generatePDF() {
   </style></head><body>`;
 
   pdfHTML += `<h1>🌸 Çallı Çiçek — Detaylı Rapor</h1>`;
-  pdfHTML += `<div class="subtitle">📅 ${dateLabel}${rData.hasPrev ? ' &nbsp;|&nbsp; Önceki dönem: ' + prevLabel : ''}</div>`;
+  pdfHTML += `<div class="subtitle">📅 ${dateLabel}${rData.hasPrev ? ' &nbsp;|&nbsp; Önceki ' + prevLabel : ''}</div>`;
 
   // KPIs with change badges
   pdfHTML += `<div class="kpi-grid">`;
@@ -1965,7 +1980,7 @@ function generatePDF() {
 
     // Önceki dönem karşılaştırması
     if (rData.hasPrev && (b.prevNet > 0 || b.prevD > 0)) {
-      pdfHTML += `<div class="pc"><strong>Önceki dönem:</strong> Net: ${fmt(b.prevNet)} → ${fmt(b.net)}`;
+      pdfHTML += `<div class="pc"><strong>Önceki ${rData.prevMezatCount} mezat:</strong> Net: ${fmt(b.prevNet)} → ${fmt(b.net)}`;
       if (b.netChange != null) pdfHTML += ` <span class="cb ${b.netChange>0?'cu':'cd'}">${b.netChange>0?'+':''}${b.netChange.toFixed(1)}%</span>`;
       pdfHTML += ` &nbsp;|&nbsp; Dm Başı: ${fmt(b.prevDbn)} → ${fmt(b.dbn)}`;
       if (b.dbnChange != null) pdfHTML += ` <span class="cb ${b.dbnChange>0?'cu':'cd'}">${b.dbnChange>0?'+':''}${b.dbnChange.toFixed(1)}%</span>`;
