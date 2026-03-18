@@ -1294,11 +1294,27 @@ function render() {
   // ══ AI ══
   if (state.tab === "ai") {
     html += `<div class="sec-title">AI Çiçek Danışmanı</div>`;
-    html += `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:14px">`;
-    ["En kârlı 5 kombo?","Hangi şubeye göndermeli?","Bu dönemi özetle","Fiyat trendi?","Geçen yıla göre?","Hangi günler en iyi fiyat?","Ne artırmalıyım?","En kötü performans?"].forEach(q => {
-      html += `<button class="ai-chip" onclick="setAIQ('${q}')">${q}</button>`;
+    html += `<div style="font-size:11px;color:#94a3b8;margin-bottom:10px;margin-top:-6px">Kesme çiçek mezat uzmanı — gönderim, fiyat ve strateji danışmanın</div>`;
+
+    // Hızlı aksiyon butonları
+    html += `<div style="margin-bottom:6px"><div style="font-size:9px;color:#475569;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px">📋 Brifing</div><div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">`;
+    ["☀ Bugün ne yapmalıyım?","📊 Haftalık özet","🔮 Gelecek hafta tahmini"].forEach(q => {
+      html += `<button class="ai-chip" style="background:rgba(34,197,94,0.08);border-color:rgba(34,197,94,0.15);color:#6ee7b7" onclick="setAIQ('${q.replace(/'/g,"\\'")}');handleAI()">${q}</button>`;
     });
-    html += `</div>`;
+    html += `</div></div>`;
+
+    html += `<div style="margin-bottom:6px"><div style="font-size:9px;color:#475569;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px">🎯 Strateji</div><div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">`;
+    ["Hangi şubeye göndermeli?","Hangi gün göndermeli?","En kârlı 5 kombo?","Fiyat trendi nasıl?"].forEach(q => {
+      html += `<button class="ai-chip" onclick="setAIQ('${q.replace(/'/g,"\\'")}');handleAI()">${q}</button>`;
+    });
+    html += `</div></div>`;
+
+    html += `<div style="margin-bottom:10px"><div style="font-size:9px;color:#475569;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px">🔍 Analiz</div><div style="display:flex;gap:5px;flex-wrap:wrap">`;
+    ["Geçen yıla göre durum?","En kötü performans?","Şubeleri karşılaştır","Bu dönemi özetle"].forEach(q => {
+      html += `<button class="ai-chip" onclick="setAIQ('${q.replace(/'/g,"\\'")}');handleAI()">${q}</button>`;
+    });
+    html += `</div></div>`;
+
     html += `<div id="aiChat" style="margin-bottom:14px;max-height:450px;overflow-y:auto">`;
     state.aiH.forEach(m => {
       // Simple markdown: **bold** → <strong>, \n → <br>
@@ -1307,7 +1323,7 @@ function render() {
     });
     if (state.aiL) html += `<div class="ai-msg ai-msg-ai"><div style="color:#64748b;font-size:12px">Analiz ediliyor...</div></div>`;
     html += `</div>`;
-    html += `<div style="display:flex;gap:8px;position:sticky;bottom:0;padding:8px 0;background:#0b0e18"><input class="ai-input" id="aiInput" value="${esc(state.aiQ)}" placeholder="Sor: Lisyantus'u nereye göndermeli?" onkeydown="if(event.key==='Enter')handleAI()"><button class="ai-send" style="background:${state.aiQ.trim()?'linear-gradient(135deg,#7c3aed,#6d28d9)':'rgba(255,255,255,0.06)'};color:${state.aiQ.trim()?'#fff':'#475569'}" onclick="handleAI()">Sor</button></div>`;
+    html += `<div style="display:flex;gap:8px;position:sticky;bottom:0;padding:8px 0;background:#0b0e18"><input class="ai-input" id="aiInput" value="${esc(state.aiQ)}" placeholder="Sor: Frezya Mor'u nereye göndermeli?" onkeydown="if(event.key==='Enter')handleAI()"><button class="ai-send" style="background:${state.aiQ.trim()?'linear-gradient(135deg,#7c3aed,#6d28d9)':'rgba(255,255,255,0.06)'};color:${state.aiQ.trim()?'#fff':'#475569'}" onclick="handleAI()">Sor</button></div>`;
     // Clear chat button
     if (state.aiH.length > 0) html += `<button onclick="state.aiH=[];render()" style="width:100%;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:#475569;font-size:10px;cursor:pointer;margin-top:4px">Sohbeti temizle</button>`;
   }
@@ -2040,13 +2056,31 @@ async function handleAI() {
   const bc = getBranchComp(filtered);
   const yoy = getYoY(filtered);
 
+  // ── Gün bazlı analiz (tüm veriden) ──
+  const gunAnaliz = {};
+  ALL_DATA.forEach(r => {
+    const d = new Date(r.t + "T00:00:00");
+    const gun = ["Pazar","Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi"][d.getDay()];
+    if (!gunAnaliz[gun]) gunAnaliz[gun] = { net: 0, d: 0, count: 0 };
+    gunAnaliz[gun].net += r.net; gunAnaliz[gun].d += r.d; gunAnaliz[gun].count++;
+  });
+  const gunList = Object.entries(gunAnaliz).map(([g, v]) => ({
+    gun: g, dbn: v.d > 0 ? v.net / v.d : 0, d: v.d, mezatSayisi: v.count
+  })).sort((a, b) => b.dbn - a.dbn);
+  const gunStr = gunList.map(g => g.gun + ": " + fmt(g.dbn) + "/dm (" + g.d + "dm, " + g.mezatSayisi + " satış)").join("; ");
+
+  // ── Önceki mezat karşılaştırması ──
+  const rData = getPDFReportData(filtered);
+  const prevCompStr = rData.hasPrev ? "Önceki " + rData.prevMezatCount + " mezata göre: Net " + fmt(rData.prevTotalNet) + " → " + fmt(stats.tn) + (rData.prevTotalNet > 0 ? " (" + ((stats.tn - rData.prevTotalNet) / rData.prevTotalNet * 100).toFixed(1) + "%)" : "") : "Önceki mezat verisi yok";
+
   const ctx = "VERİ (" + fD(state.sd) + "-" + fD(state.ed) + "): Ciro:" + fmt(stats.tc) + ", Net:" + fmt(stats.tn) + ", " + stats.td + "dm, Ort:" + fmt2(stats.av) +
+    "\n" + prevCompStr +
     "\nÇiçek(dbn sıralı): " + stats.byF.slice(0, 12).map(f => f.name + ":" + fmt(f.dbn) + "/dm," + f.d + "dm," + fmt(f.net) + "net").join("; ") +
     "\nŞube(net sıralı): " + stats.byB.slice(0, 12).map(b => b.name + ":" + fmt(b.net) + "net," + b.d + "dm," + fmt(b.dbn) + "/dm").join("; ") +
     "\nTopKombo(dbn sıralı): " + hd.slice(0, 12).map(h => h.cicek + "→" + h.sube + ":" + fmt(h.dbn) + "/dm," + h.d + "dm").join("; ") +
     "\nGünlük: " + stats.dl.map(d => fD(d.date) + "(" + ["Paz","Pzt","Sal","Çar","Per","Cum","Cmt"][new Date(d.date+"T00:00:00").getDay()] + "):" + fmt(d.avgP) + "ort," + d.d + "dm," + fmt(d.net) + "net").join("; ") +
+    "\nHAFTANIN GÜNLERİ PERFORMANS (tüm veri): " + gunStr +
     (function(){
-      // Per-flower daily breakdown for top 5 flowers
       var detail = "";
       stats.byF.slice(0,5).forEach(function(f){
         var dayMap = {};
@@ -2063,11 +2097,9 @@ async function handleAI() {
     })() +
     "\nGeçenYıl: " + (yoy.has ? "2025net:" + fmt(yoy.lN) + "," + yoy.lD + "dm,ort" + fmt(yoy.lA) + " → 2026net:" + fmt(yoy.tN) + "," + yoy.tD + "dm,ort" + fmt(yoy.tA) + " değişim:" + (yoy.nCh>0?"+":"") + (yoy.nCh?.toFixed(1)||"—") + "%" : "geçen yıl verisi yok") +
     (function(){
-      // Detailed 2025 data
       var data2025 = ALL_DATA.filter(function(r){ return r.t.startsWith("2025") });
       if (data2025.length === 0) return "";
       var detail = "\n\n=== 2025 DETAYLI VERİ ===";
-      // 2025 flower breakdown
       var fm = {};
       data2025.forEach(function(r){
         if(!fm[r.c]) fm[r.c]={net:0,d:0};
@@ -2075,7 +2107,6 @@ async function handleAI() {
       });
       var fList = Object.entries(fm).map(function(e){return {name:e[0],net:e[1].net,d:e[1].d,dbn:e[1].d>0?e[1].net/e[1].d:0}}).sort(function(a,b){return b.dbn-a.dbn});
       detail += "\n2025 Çiçek(dbn sıralı): " + fList.slice(0,12).map(function(f){return f.name+":"+fmt(f.dbn)+"/dm,"+f.d+"dm,"+fmt(f.net)+"net"}).join("; ");
-      // 2025 branch breakdown
       var bm = {};
       data2025.forEach(function(r){
         if(!bm[r.s]) bm[r.s]={net:0,d:0};
@@ -2083,7 +2114,6 @@ async function handleAI() {
       });
       var bList = Object.entries(bm).map(function(e){return {name:e[0],net:e[1].net,d:e[1].d,dbn:e[1].d>0?e[1].net/e[1].d:0}}).sort(function(a,b){return b.net-a.net});
       detail += "\n2025 Şube(net sıralı): " + bList.slice(0,12).map(function(b){return b.name+":"+fmt(b.net)+"net,"+b.d+"dm,"+fmt(b.dbn)+"/dm"}).join("; ");
-      // 2025 monthly breakdown
       var mm = {};
       data2025.forEach(function(r){
         var m = r.t.substring(0,7);
@@ -2092,7 +2122,6 @@ async function handleAI() {
       });
       var mList = Object.entries(mm).sort(function(a,b){return a[0].localeCompare(b[0])}).map(function(e){return e[0]+":"+fmt(e[1].net)+"net,"+e[1].d+"dm,ort"+fmt(e[1].d>0?e[1].net/e[1].d:0)+"/dm"});
       detail += "\n2025 Aylık: " + mList.join("; ");
-      // Per-flower YoY comparison
       detail += "\nÇiçek YoY Karşılaştırma: ";
       var now2026 = {};
       filtered.forEach(function(r){if(!now2026[r.c])now2026[r.c]={net:0,d:0};now2026[r.c].net+=r.net;now2026[r.c].d+=r.d});
@@ -2110,14 +2139,44 @@ async function handleAI() {
       return detail;
     })();
 
+  // ── Conversation history (karşılıklı sohbet) ──
+  const maxHistory = 6; // Son 6 mesaj (3 soru + 3 cevap)
+  const recentHistory = state.aiH.slice(-maxHistory);
+  const apiMessages = [];
+  recentHistory.forEach(m => {
+    if (m.r === "u") apiMessages.push({ role: "user", content: m.t });
+    else apiMessages.push({ role: "assistant", content: m.t });
+  });
+  apiMessages.push({ role: "user", content: q });
+
   try {
-    const systemPrompt = "Sen bir çiçek mezat analisti ve danışmanısın. Kullanıcı Yalova'da çiçek üreticisi — Flora mezatına (Hollanda tipi açık artırma) çiçek gönderiyor. Türkçe cevap ver. Kısa, net ve aksiyon odaklı ol. Sayıları ve TL değerlerini kullan. Somut önerilerde bulun. Gider oranı %20 sabit.\n\nVERİLER:\n" + ctx;
+    const systemPrompt = "Sen Çallı Çiçek için çalışan kıdemli bir kesme çiçek mezat analisti ve gönderim danışmanısın.\n\n" +
+      "== KULLANICI PROFİLİ ==\n" +
+      "Yalova'da kesme çiçek üreticisi. Flora mezatına (Hollanda tipi açık artırma) çiçek gönderiyor.\n" +
+      "Gider oranı %20 sabit (komisyon + nakliye). Net = Brüt × 0.80.\n\n" +
+      "== KRİTİK SEKTÖR BİLGİSİ ==\n" +
+      "1. KESme çiçek üretiminde STOK ARTIRILMAZ/AZALTILMAZ anlık olarak. Dikim sezonluk (aylar öncesinden planlanır), hasat günlük. Üretici bugün elinde ne varsa onu gönderir.\n" +
+      "2. Asla 'stok artır', 'üretimi artır', 'daha fazla ek' gibi kısa vadeli üretim önerileri VERME. Bunun yerine GÖNDERİM STRATEJİSİ öner: hangi şubeye, hangi gün, hangi kombinasyonda.\n" +
+      "3. Orta/uzun vade için (gelecek sezon dikimi) üretim önerisi verebilirsin ama bunu açıkça 'gelecek sezon için' diye belirt.\n" +
+      "4. Mezat günleri genelde Pazartesi, Çarşamba, Cuma ama değişebilir. Haftanın günlerine göre fiyat farkları önemli.\n" +
+      "5. Kutu başına 8-40 demet. Karışık çiçek bir kutuya konabilir.\n" +
+      "6. Şubelerde açık artırma ile satılıyor — sıra numarası kura ile belirlenir, üreticinin kontrolünde değil.\n\n" +
+      "== ÖNERİ KURALLARI ==\n" +
+      "- Kısa, net, aksiyon odaklı cevap ver. Sayıları ve ₺ değerlerini kullan.\n" +
+      "- Her öneride SOMUT rakam ver: '3 kutu Ankara'ya, 2 kutu Kadıköy'e' gibi.\n" +
+      "- 'Bugün ne yapmalıyım' sorulunca: Eldeki çiçeklerin en kârlı gönderim planını yap.\n" +
+      "- 'Hangi gün göndermeli' sorulunca: Haftanın günleri verisini analiz et, en iyi günleri öner.\n" +
+      "- 'Haftalık özet' sorulunca: Bu haftanın performansını özetle, önceki mezatlarla karşılaştır, kritik noktaları belirt.\n" +
+      "- 'Gelecek hafta tahmini' sorulunca: Trend ve geçmiş yıl verisine dayanarak gelecek haftanın fiyat beklentisini söyle.\n" +
+      "- Türkçe cevap ver. Markdown **kalın** kullanabilirsin.\n\n" +
+      "== VERİLER ==\n" + ctx;
+
     const resp = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         system: systemPrompt,
-        messages: [{ role: "user", content: q }]
+        messages: apiMessages
       })
     });
     const data = await resp.json();
@@ -2138,37 +2197,112 @@ async function handleAI() {
 
 function localAnswer(q, stats, bc, hd, yoy) {
   const ql = q.toLowerCase();
+
+  // ── Bugün ne yapmalıyım / Günlük brifing ──
+  if (ql.includes("bugün") || ql.includes("ne yapmalı") || ql.includes("brifing")) {
+    let ans = "☀ **Günlük Brifing**\n\n";
+    ans += "**Dönem:** " + fD(state.sd) + (state.sd !== state.ed ? " – " + fD(state.ed) : "") + "\n";
+    ans += "**Net Gelir:** " + fmt(stats.tn) + " | **Demet:** " + stats.td + " | **Ort:** " + fmt2(stats.av) + "/dm\n\n";
+    if (stats.byF.length > 0) {
+      ans += "**En kârlı gönderim önerisi:**\n";
+      hd.slice(0, 5).forEach((h, i) => { ans += (i+1) + ". " + h.cicek + " → **" + h.sube + "**: " + fmt(h.dbn) + "/dm (" + h.d + "dm)\n"; });
+      ans += "\n**Kaçınılacak kombinasyonlar:**\n";
+      hd.slice(-2).forEach(h => { ans += "⚠ " + h.cicek + " → " + h.sube + ": " + fmt(h.dbn) + "/dm — düşük getiri\n"; });
+    }
+    return ans;
+  }
+
+  // ── Haftalık özet ──
+  if (ql.includes("haftalık") || ql.includes("hafta özet") || ql.includes("bu haftayı")) {
+    let ans = "📊 **Haftalık Özet**\n\n";
+    ans += "**Net Gelir:** " + fmt(stats.tn) + "\n**Demet:** " + stats.td + "\n**Ort. Dm Başı Net:** " + fmt2(stats.av) + "\n\n";
+    ans += "**En iyi 3 çiçek:**\n";
+    stats.byF.slice(0, 3).forEach((f, i) => { ans += (i+1) + ". **" + f.name + "** — " + fmt(f.dbn) + "/dm (" + f.d + "dm, " + fmt(f.net) + " net)\n"; });
+    ans += "\n**En iyi 3 şube:**\n";
+    stats.byB.slice(0, 3).forEach((b, i) => { ans += (i+1) + ". **" + b.name + "** — " + fmt(b.net) + " net (" + b.d + "dm)\n"; });
+    if (stats.byF.length > 3) {
+      ans += "\n**Dikkat:** " + stats.byF.slice(-1)[0].name + " en düşük performans (" + fmt(stats.byF.slice(-1)[0].dbn) + "/dm) — bu çiçeği düşük fiyatlı şubelerden çek.\n";
+    }
+    return ans;
+  }
+
+  // ── Gelecek hafta tahmini ──
+  if (ql.includes("gelecek") || ql.includes("tahmin") || ql.includes("önümüzdeki")) {
+    let ans = "🔮 **Gelecek Hafta Tahmini**\n\n";
+    if (stats.dl.length >= 2) {
+      const f = stats.dl[0], l = stats.dl[stats.dl.length - 1];
+      const ch = f.avgP > 0 ? ((l.avgP - f.avgP) / f.avgP * 100) : 0;
+      ans += "**Mevcut trend:** " + (ch > 0 ? "▲ Yükseliş" : ch < 0 ? "▼ Düşüş" : "→ Stabil") + " (" + (ch > 0 ? "+" : "") + ch.toFixed(1) + "%)\n\n";
+      if (ch > 5) ans += "Fiyatlar yükselişte. Gönderim miktarını koruyabilirsin, en kârlı şubelere ağırlık ver.\n";
+      else if (ch < -5) ans += "Fiyatlar düşüşte. Dikkatli ol, düşük performanslı şubelerden çek, az ama kârlı gönder.\n";
+      else ans += "Fiyatlar stabil. Normal gönderim planına devam et.\n";
+    }
+    if (yoy.has) {
+      ans += "\n**Geçen yıl bu dönem:** Net " + fmt(yoy.lN) + " (" + yoy.lD + "dm, " + fmt(yoy.lA) + "/dm)\n";
+      ans += "**Bu yıl:** Net " + fmt(yoy.tN) + " (" + yoy.tD + "dm, " + fmt(yoy.tA) + "/dm)\n";
+      ans += yoy.nCh > 0 ? "Geçen yıla göre **+" + yoy.nCh.toFixed(0) + "%** ileride.\n" : "Geçen yıla göre **" + yoy.nCh?.toFixed(0) + "%** geride.\n";
+    }
+    ans += "\n_Not: Bu trend bazlı tahmindir. Kesme çiçek piyasası hava durumu, tatiller ve talep değişimlerine göre dalgalanabilir._";
+    return ans;
+  }
+
+  // ── Hangi gün göndermeli ──
+  if (ql.includes("gün") || ql.includes("pazartesi") || ql.includes("salı") || ql.includes("hangi gün") || ql.includes("çarşamba") || ql.includes("cuma")) {
+    const gunler = {};
+    ALL_DATA.forEach(r => {
+      const d = new Date(r.t + "T00:00:00");
+      const gun = ["Pazar","Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi"][d.getDay()];
+      if (!gunler[gun]) gunler[gun] = { net: 0, d: 0, days: new Set() };
+      gunler[gun].net += r.net; gunler[gun].d += r.d; gunler[gun].days.add(r.t);
+    });
+    const gunList = Object.entries(gunler).map(([g, v]) => ({
+      gun: g, dbn: v.d > 0 ? v.net / v.d : 0, d: v.d, mezatGunu: v.days.size
+    })).sort((a, b) => b.dbn - a.dbn);
+
+    let ans = "📅 **Haftanın Günleri Analizi** (tüm veriler)\n\n";
+    gunList.forEach((g, i) => {
+      const icon = i === 0 ? "🏆" : i === gunList.length - 1 ? "⚠" : "  ";
+      ans += icon + " **" + g.gun + "**: " + fmt(g.dbn) + "/dm (" + g.d + " demet, " + g.mezatGunu + " mezat günü)\n";
+    });
+    const best = gunList[0], worst = gunList[gunList.length - 1];
+    if (best && worst && best.dbn > worst.dbn) {
+      const diff = ((best.dbn - worst.dbn) / worst.dbn * 100);
+      ans += "\n**Sonuç:** " + best.gun + " günü " + worst.gun + "'e göre **%" + diff.toFixed(0) + " daha kârlı**.\n";
+      ans += "Elinden geldiğince **" + best.gun + "** günü daha fazla mal yetiştirmeye çalış.";
+    }
+    return ans;
+  }
+
+  // ── Şube karşılaştır ──
+  if (ql.includes("şube") || ql.includes("nereye") || ql.includes("göndermeli") || ql.includes("gonder") || ql.includes("karşılaştır"))
+    return "📍 **Şube Önerisi:**\n\n" + bc.slice(0, 5).map(c => "**" + c.flower + ":**\n" + c.branches.slice(0, 3).map((b, i) => "  " + (i === 0 ? "🏆" : "  ") + " " + b.name + ": " + fmt(b.avgP) + "/dm (" + b.d + "dm)").join("\n")).join("\n\n");
+
+  // ── Kombo ──
   if (ql.includes("kombo") || ql.includes("kârlı") || ql.includes("karli"))
-    return "En Kârlı 5 Kombinasyon:\n" + hd.slice(0, 5).map((h, i) => (i + 1) + ". " + h.cicek + " → " + h.sube + ": " + fmt(h.dbn) + "/dm (" + h.d + "dm)").join("\n");
-  if (ql.includes("şube") || ql.includes("nereye") || ql.includes("göndermeli") || ql.includes("gonder"))
-    return bc.slice(0, 5).map(c => c.flower + ":\n" + c.branches.slice(0, 3).map((b, i) => "  " + (i === 0 ? "🏆" : " ") + " " + b.name + ": " + fmt(b.avgP) + " (" + b.d + "dm)").join("\n")).join("\n\n");
-  if (ql.includes("özetle") || ql.includes("özet") || ql.includes("hafta") || ql.includes("durum"))
-    return "Dönem Özeti:\n• Net Gelir: " + fmt(stats.tn) + "\n• " + stats.td + " demet | Ort: " + fmt2(stats.av) + "/dm\n\nEn kârlı 3 çiçek:\n" + stats.byF.slice(0,3).map((f,i)=>(i+1)+". "+f.name+" — "+fmt(f.dbn)+"/dm ("+f.d+"dm)").join("\n") + "\n\nEn iyi 3 şube:\n" + stats.byB.slice(0,3).map((b,i)=>(i+1)+". "+b.name+" — "+fmt(b.net)+" net").join("\n");
+    return "💰 **En Kârlı 5 Kombinasyon:**\n\n" + hd.slice(0, 5).map((h, i) => (i + 1) + ". **" + h.cicek + "** → **" + h.sube + "**: " + fmt(h.dbn) + "/dm (" + h.d + "dm)").join("\n");
+
+  // ── Özet ──
+  if (ql.includes("özetle") || ql.includes("özet") || ql.includes("durum"))
+    return "📊 **Dönem Özeti:**\n\n• Net Gelir: **" + fmt(stats.tn) + "**\n• " + stats.td + " demet | Ort: " + fmt2(stats.av) + "/dm\n\nEn kârlı 3 çiçek:\n" + stats.byF.slice(0,3).map((f,i)=>(i+1)+". **"+f.name+"** — "+fmt(f.dbn)+"/dm ("+f.d+"dm)").join("\n") + "\n\nEn iyi 3 şube:\n" + stats.byB.slice(0,3).map((b,i)=>(i+1)+". **"+b.name+"** — "+fmt(b.net)+" net").join("\n");
+
+  // ── Trend ──
   if (ql.includes("trend") || ql.includes("fiyat") || ql.includes("yüksel") || ql.includes("düş")) {
     if (stats.dl.length < 2) return "En az 2 gün seç.";
     const f = stats.dl[0], l = stats.dl[stats.dl.length - 1];
     const ch = f.avgP > 0 ? ((l.avgP - f.avgP) / f.avgP * 100) : 0;
-    return "Fiyat Trendi:\n" + fD(f.date) + ": " + fmt(f.avgP) + " → " + fD(l.date) + ": " + fmt(l.avgP) + "\nDeğişim: " + (ch > 0 ? "+" : "") + ch.toFixed(1) + "%\n\nEn çok yükselen:\n" + stats.byF.filter(x=>x.dbn>0).slice(0,3).map(x=>x.name+" — "+fmt(x.dbn)+"/dm").join("\n");
+    return "📈 **Fiyat Trendi:**\n\n" + fD(f.date) + ": " + fmt(f.avgP) + " → " + fD(l.date) + ": " + fmt(l.avgP) + "\nDeğişim: **" + (ch > 0 ? "+" : "") + ch.toFixed(1) + "%**\n\n" + (ch > 0 ? "Fiyatlar yükselişte, gönderim stratejini koru." : "Fiyatlar düşüşte, düşük şubelerden çek.");
   }
-  if (ql.includes("geçen yıl") || ql.includes("2025") || ql.includes("karşılaştır"))
-    return yoy.has ? "Geçen Yıl Karşılaştırması:\n2025: " + fmt(yoy.lN) + " net (" + yoy.lD + "dm, " + fmt(yoy.lA) + "/dm)\n2026: " + fmt(yoy.tN) + " net (" + yoy.tD + "dm, " + fmt(yoy.tA) + "/dm)\n\nNet Gelir: " + (yoy.nCh>0?"+":"") + (yoy.nCh?.toFixed(1)||"—") + "%\nDm Başı: " + (yoy.pCh>0?"+":"") + (yoy.pCh?.toFixed(1)||"—") + "%" : "Geçen yıl verisi yok.";
-  if (ql.includes("bırak") || ql.includes("kötü") || ql.includes("kazandırmıyor") || ql.includes("düşük"))
-    return "En Düşük Performans:\n" + stats.byF.slice(-3).reverse().map((f,i)=>(i+1)+". "+f.name+" — "+fmt(f.dbn)+"/dm ("+f.d+"dm, "+fmt(f.net)+" net)").join("\n") + "\n\nBu çiçeklerin demet başı net geliri düşük. Üretimi azaltmayı veya daha iyi şubelere yönlendirmeyi düşün.";
-  if (ql.includes("artır") || ql.includes("üretim") || ql.includes("yapmalıyım") || ql.includes("öneri"))
-    return "Öneriler:\n\n📈 Artır:\n" + stats.byF.slice(0,3).map((f,i)=>(i+1)+". "+f.name+" — "+fmt(f.dbn)+"/dm, güçlü performans").join("\n") + "\n\n📉 Azalt/Değiştir:\n" + stats.byF.slice(-2).map(f=>"• "+f.name+" — "+fmt(f.dbn)+"/dm, düşük getiri").join("\n") + "\n\n📍 En iyi şubeler:\n" + stats.byB.slice(0,3).map(b=>"• "+b.name+" — "+fmt(b.net)+" net").join("\n");
-  if (ql.includes("gün") || ql.includes("pazartesi") || ql.includes("salı") || ql.includes("hangi gün")) {
-    const gunler = {};
-    getFiltered().forEach(r => {
-      const d = new Date(r.t + "T00:00:00");
-      const gun = ["Pazar","Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi"][d.getDay()];
-      if (!gunler[gun]) gunler[gun] = {net:0,d:0};
-      gunler[gun].net += r.net; gunler[gun].d += r.d;
-    });
-    const gunList = Object.entries(gunler).map(([g,v])=>({gun:g,dbn:v.d>0?v.net/v.d:0,d:v.d})).sort((a,b)=>b.dbn-a.dbn);
-    return "Gün Bazlı Demet Başı Net:\n" + gunList.map((g,i)=>(i===0?"🏆 ":"   ")+g.gun+": "+fmt(g.dbn)+"/dm ("+g.d+"dm)").join("\n");
-  }
-  // Default: genel özet
-  return "Genel Durum:\n• Net Gelir: " + fmt(stats.tn) + " | " + stats.td + " demet\n• Ort: " + fmt2(stats.av) + "/dm\n• En kârlı: " + (stats.byF[0]?.name || "—") + " (" + fmt(stats.byF[0]?.dbn || 0) + "/dm)\n• En iyi şube: " + (stats.byB[0]?.name || "—") + "\n\nÖneri sorularını dene:\n• 'Bu dönemi özetle'\n• 'Hangi günler en iyi fiyat?'\n• 'Ne artırmalıyım?'\n• 'En kârlı kombo?'";
+
+  // ── Geçen yıl ──
+  if (ql.includes("geçen yıl") || ql.includes("2025"))
+    return yoy.has ? "📊 **Geçen Yıl Karşılaştırması:**\n\n2025: " + fmt(yoy.lN) + " net (" + yoy.lD + "dm, " + fmt(yoy.lA) + "/dm)\n2026: " + fmt(yoy.tN) + " net (" + yoy.tD + "dm, " + fmt(yoy.tA) + "/dm)\n\nNet Gelir: **" + (yoy.nCh>0?"+":"") + (yoy.nCh?.toFixed(1)||"—") + "%**\nDm Başı: **" + (yoy.pCh>0?"+":"") + (yoy.pCh?.toFixed(1)||"—") + "%**" : "Geçen yıl verisi yok.";
+
+  // ── Kötü performans ──
+  if (ql.includes("kötü") || ql.includes("düşük") || ql.includes("kazandırmıyor"))
+    return "⚠ **Düşük Performans:**\n\n" + stats.byF.slice(-3).reverse().map((f,i)=>(i+1)+". **"+f.name+"** — "+fmt(f.dbn)+"/dm ("+f.d+"dm, "+fmt(f.net)+" net)").join("\n") + "\n\n**Öneri:** Bu çiçekleri düşük fiyatlı şubelerden çek, sadece en iyi fiyat veren 1-2 şubeye gönder.";
+
+  // Default
+  return "🌸 **Genel Durum:**\n\n• Net Gelir: **" + fmt(stats.tn) + "** | " + stats.td + " demet\n• Ort: " + fmt2(stats.av) + "/dm\n• En kârlı: **" + (stats.byF[0]?.name || "—") + "** (" + fmt(stats.byF[0]?.dbn || 0) + "/dm)\n• En iyi şube: **" + (stats.byB[0]?.name || "—") + "**\n\nSorabileceğin sorular:\n• ☀ Bugün ne yapmalıyım?\n• 📅 Hangi gün göndermeli?\n• 📊 Haftalık özet\n• 🔮 Gelecek hafta tahmini\n• 💰 En kârlı kombo?";
 }
 
 // Close dropdowns on outside click
