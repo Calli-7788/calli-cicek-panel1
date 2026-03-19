@@ -2255,7 +2255,7 @@ async function handlePlan() {
       "Deneme kutularını açıkça '🔍 DENEME' olarak işaretle ve nedenini 2025 verisiyle açıkla.";
   }
 
-  // ── 2025 overall context ──
+  // ── Geçmiş yıllar mevsimsel context (2019-2025) ──
   var hist2025Text = "";
   if (data2025.length > 0) {
     var hist25ByF = {};
@@ -2268,6 +2268,102 @@ async function handlePlan() {
       return e[0] + ": " + fmt(e[1].d>0?e[1].net/e[1].d:0) + "/dm, " + e[1].d + "dm";
     }).join("; ");
   }
+
+  // ── MEVSİMSEL ZEKA: Geçmiş yılların aynı haftası ──
+  var mevsimselText = "";
+  try {
+    var bugun = new Date();
+    var buHaftaNo = getWeekNumber(bugun);
+    var buAy = bugun.getMonth() + 1;
+    var ayAdlari = ["","Ocak","Şubat","Mart","Nisan","Mayıs","Haziran","Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"];
+    var gecmisYillar = [...new Set(ALL_DATA.map(function(r){return r.t.substring(0,4)}))].filter(function(y){return y !== String(bugun.getFullYear())}).sort();
+
+    mevsimselText = "\n\n=== 🗓 MEVSİMSEL ZEKA (ENFLASYONSUz) ===";
+
+    // Her geçmiş yılın aynı haftasındaki verisi (çiçek × şube)
+    var haftaVerileri = {};
+    gecmisYillar.forEach(function(yil) {
+      // O yılın genel ortalaması
+      var yilData = ALL_DATA.filter(function(r){return r.t.startsWith(yil)});
+      var yilDbn = yilData.reduce(function(s,r){return s+r.d},0) > 0 ? yilData.reduce(function(s,r){return s+r.net},0) / yilData.reduce(function(s,r){return s+r.d},0) : 0;
+      if (yilDbn <= 0) return;
+
+      // Aynı haftanın verisi
+      var haftaData = yilData.filter(function(r){
+        var d = new Date(r.t + "T00:00:00");
+        return getWeekNumber(d) === buHaftaNo;
+      });
+      // Hafta yoksa aynı ayın verisi
+      if (haftaData.length === 0) {
+        haftaData = yilData.filter(function(r){return parseInt(r.t.substring(5,7)) === buAy});
+      }
+      if (haftaData.length === 0) return;
+
+      var haftaDbn = haftaData.reduce(function(s,r){return s+r.d},0) > 0 ? haftaData.reduce(function(s,r){return s+r.net},0) / haftaData.reduce(function(s,r){return s+r.d},0) : 0;
+      var mevsimselYuzde = yilDbn > 0 ? ((haftaDbn / yilDbn) * 100).toFixed(0) : "—";
+
+      haftaVerileri[yil] = { dbn: haftaDbn, yuzde: mevsimselYuzde, demet: haftaData.reduce(function(s,r){return s+r.d},0) };
+
+      // O yılın bu haftasında çiçek bazlı
+      var cicekMap = {};
+      haftaData.forEach(function(r){
+        if(!cicekMap[r.c]) cicekMap[r.c] = {net:0,d:0};
+        cicekMap[r.c].net += r.net; cicekMap[r.c].d += r.d;
+      });
+      haftaVerileri[yil].cicekler = Object.entries(cicekMap).map(function(e){
+        return e[0] + ":" + fmt(e[1].d>0?e[1].net/e[1].d:0) + "/dm";
+      }).join(", ");
+    });
+
+    if (Object.keys(haftaVerileri).length > 0) {
+      mevsimselText += "\nBu hafta (Hafta " + buHaftaNo + ", " + ayAdlari[buAy] + ") geçmiş yıllarda:";
+      Object.entries(haftaVerileri).forEach(function(e) {
+        mevsimselText += "\n  " + e[0] + ": ort " + fmt(e[1].dbn) + "/dm (yıl ort'un %" + e[1].yuzde + "'i, " + e[1].demet + "dm)";
+        if (e[1].cicekler) mevsimselText += " → " + e[1].cicekler;
+      });
+
+      // Ortalama mevsimsel yüzde
+      var yuzdeler = Object.values(haftaVerileri).map(function(v){return parseInt(v.yuzde)}).filter(function(n){return !isNaN(n)});
+      if (yuzdeler.length > 0) {
+        var ortYuzde = yuzdeler.reduce(function(s,x){return s+x},0) / yuzdeler.length;
+        mevsimselText += "\n  📊 Ortalama mevsimsel endeks: %" + ortYuzde.toFixed(0) + " (100=yıl ortalaması)";
+        if (ortYuzde > 110) mevsimselText += " → 🔥 Bu hafta tarihsel olarak YÜKSEK fiyat dönemi. Agresif olabilirsin.";
+        else if (ortYuzde > 100) mevsimselText += " → ✅ Bu hafta ortalamanın üstünde. Normal/dengeli strateji uygun.";
+        else if (ortYuzde > 90) mevsimselText += " → ⚡ Bu hafta ortalamaya yakın. Dikkatli ol.";
+        else mevsimselText += " → ⚠️ Bu hafta tarihsel olarak DÜŞÜK fiyat dönemi. Güvenli strateji önerilir, fazla risk alma.";
+      }
+    }
+
+    // Fiyat tahmini
+    var fc = getForecast();
+    if (fc.genelTahmin.merkez > 0) {
+      mevsimselText += "\n\n🔮 FİYAT TAHMİNİ (önümüzdeki hafta):";
+      mevsimselText += "\n  Genel: " + fmt(fc.genelTahmin.merkez) + "/dm (bant: " + fmt(fc.genelTahmin.alt) + "–" + fmt(fc.genelTahmin.ust) + ", güven: " + fc.genelTahmin.guven + ")";
+      mevsimselText += "\n  Son hafta trendi: " + (fc.trendPct > 0 ? "+" : "") + fc.trendPct.toFixed(1) + "%";
+      // Planlanan çiçeklerin tahmini
+      state.planFlowers.forEach(function(pf) {
+        var ct = fc.cicekTahminleri.find(function(c){return c.cicek === pf.name});
+        if (ct) {
+          mevsimselText += "\n  " + pf.name + ": tahmin " + fmt(ct.merkez) + "/dm (bant: " + fmt(ct.alt) + "–" + fmt(ct.ust) + ", güven: " + ct.guven + ", trend: " + (ct.trend > 0 ? "+" : "") + ct.trend.toFixed(0) + "%)";
+        }
+      });
+    }
+
+    // Yaklaşan özel gün uyarısı
+    var ozelGunUyari = "";
+    OZEL_GUNLER.forEach(function(og) {
+      var mm = parseInt(og.tarih.substring(0, 2));
+      var dd = parseInt(og.tarih.substring(3, 5));
+      var ozelDate = new Date(bugun.getFullYear(), mm - 1, dd);
+      if (ozelDate < bugun) ozelDate.setFullYear(ozelDate.getFullYear() + 1);
+      var gunFarki = Math.round((ozelDate - bugun) / 864e5);
+      if (gunFarki <= 14 && gunFarki >= 0) {
+        ozelGunUyari += "\n  🎉 " + og.ad + " " + gunFarki + " gün sonra! Fiyat artışı beklenir.";
+      }
+    });
+    if (ozelGunUyari) mevsimselText += "\n\n⏰ ÖZEL GÜN UYARISI:" + ozelGunUyari;
+
+  } catch(e) { mevsimselText = ""; }
 
   var strategyDesc = {
     safe: "GÜVENLİ STRATEJİ:\n" +
@@ -2301,6 +2397,7 @@ async function handlePlan() {
     "\n\nGÜNCEL VERİLER:" + trendInfo +
     "\n\nKombo sıralaması: " + hd.slice(0,25).map(function(h){return h.cicek+"→"+h.sube+":"+fmt(h.dbn)+"/dm"}).join("; ") +
     hist2025Text +
+    mevsimselText +
     "\n\n🚨 ZORUNLU KURALLAR:\n" +
     "1. ❌ GÖNDERME etiketli çiçek-şube kombinasyonlarına KESİNLİKLE kutu yapma!\n" +
     "2. ⚠️ AZALT etiketli kombinasyonlara önerilen yüzdenin YARISINI ver.\n" +
@@ -2309,7 +2406,7 @@ async function handlePlan() {
     "5. 🚨🚨🚨 HER ÇİÇEĞİN TOPLAM DEMETİ GİRİLEN MİKTARA BİREBİR EŞİT OLMALI! KALAN DEMET BIRAKMAK YASAK! Eğer kutulara tam sığmıyorsa son kutuyu eksik doldur veya en iyi şubeye ekstra kutu yap. Hiçbir demet boşta kalamaz!\n" +
     "6. Kutu başına " + state.planBoxSize + " demet. Karışık çiçek konulabilir. Son kutu tam dolmak zorunda DEĞİL.\n" +
     "7. UCUZ şubeye PAHALI şubeden fazla kutu YASAK!\n" +
-    "8. 2025 verisi referans (%20 ağırlık), güncel veri ana karar (%80).\n" +
+    "8. Geçmiş yıl verisi referans (%15 ağırlık), mevsimsel endeks bilgilendirme, güncel veri ana karar (%85). Mevsimsel uyarı varsa risk notunda belirt.\n" +
     "9. Tüm şubelere kutu yapmak ZORUNLU DEĞİL.\n" +
     "10. DAĞILIM DETAYI bölümünde her çiçeğin şubelere dağılımını yaz ve TOPLAMI KONTROL ET. Toplam girilen demete eşit değilse DÜZELT!\n" +
     "\nÇIKTI FORMATI:\n" +
@@ -2332,8 +2429,10 @@ async function handlePlan() {
         system: "Sen çiçek mezat lojistik uzmanısın. Yalova'da üretici, Flora mezatına gönderiyor. Gider %20. Türkçe.\n\n" +
           "EN ÖNEMLİ KURAL: ❌ GÖNDERME etiketli kombinasyonlara KESİNLİKLE kutu yapma!\n" +
           "⚠️ AZALT etiketlilere yarı pay ver. ✅ GÖNDER etiketlilere normal dağıt.\n" +
-          "Tüm şubelere kutu yapmak ZORUNLU DEĞİL. 2025 verisi %20 ağırlık.\n" +
-          "Her kutuya " + state.planBoxSize + " demet, karışık çiçek olabilir. Kesin sayılar ver.\n\n" +
+          "Tüm şubelere kutu yapmak ZORUNLU DEĞİL. Geçmiş yıl verisi %15 ağırlık.\n" +
+          "Her kutuya " + state.planBoxSize + " demet, karışık çiçek olabilir. Kesin sayılar ver.\n" +
+          "MEVSİMSEL ZEKA: Verilen mevsimsel endeks ve fiyat tahmini bilgilerini dikkate al. Eğer mevsimsel olarak düşük dönemdeysen risk notunda belirt. Özel gün yaklaşıyorsa fiyat artışı beklentisini plana yansıt.\n" +
+          "KESme çiçek üreticisi üretimi anlık artıramaz — sadece gönderim stratejisini optimize et.\n\n" +
           (state.planStrategy === "safe" ?
             "STRATEJİ DAVRANIŞI — GÜVENLİ:\n" +
             "• Max 4-5 şubeye gönder. Sadece kanıtlanmış yerlere.\n" +
