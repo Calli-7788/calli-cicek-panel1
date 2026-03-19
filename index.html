@@ -92,7 +92,13 @@ input,button,select{font-family:inherit}
 // ═══════════════ CONFIG ═══════════════
 const SHEETS = {
   "GUNCEL": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=1698698520&single=true&output=csv",
-  "2025": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=1807975712&single=true&output=csv"
+  "2025": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=1807975712&single=true&output=csv",
+  "2024": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=2134869114&single=true&output=csv",
+  "2023": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=1233420715&single=true&output=csv",
+  "2022": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=2101024407&single=true&output=csv",
+  "2021": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=1029922677&single=true&output=csv",
+  "2020": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=1123710546&single=true&output=csv",
+  "2019": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=1514448223&single=true&output=csv"
 };
 const GIDER = 0.20;
 
@@ -201,35 +207,49 @@ let GROUP_NAMES = [];
 async function loadAllData() {
   const allRecords = [];
   const sheetNames = Object.keys(SHEETS);
+  let loaded = 0;
 
-  for (const name of sheetNames) {
+  // Progress göster
+  function updateProgress(name) {
+    loaded++;
+    const el = document.getElementById("app");
+    if (el && el.querySelector(".loading-screen")) {
+      el.innerHTML = '<div class="loading-screen"><div class="spinner"></div><div style="font-size:14px;margin-bottom:6px">Veriler yükleniyor...</div><div style="font-size:11px;color:#475569;margin-bottom:10px">' + loaded + '/' + sheetNames.length + ' sheet yüklendi (' + name + ')</div><div style="width:200px;height:4px;background:rgba(255,255,255,0.06);border-radius:2px"><div style="height:100%;border-radius:2px;background:#22c55e;width:' + (loaded/sheetNames.length*100) + '%;transition:width 0.3s"></div></div></div>';
+    }
+  }
+
+  // Paralel yükleme — tüm sheet'leri aynı anda çek
+  const results = await Promise.allSettled(sheetNames.map(async (name) => {
     try {
       const resp = await fetch(SHEETS[name]);
-      if (!resp.ok) { DEBUG_INFO += name + ": HATA\n"; continue; }
+      if (!resp.ok) { DEBUG_INFO += name + ": HATA\n"; updateProgress(name); return []; }
       const text = await resp.text();
       const rows = parseCSV(text);
       
-      // Capture debug info
-      if (rows.length > 0) {
+      if (rows.length > 0 && (name === "GUNCEL" || name === "2025")) {
         const keys = Object.keys(rows[0]);
-        DEBUG_INFO += "KOLONLAR: " + keys.join(" | ") + "\n";
-        DEBUG_INFO += "İLK SATIR: " + JSON.stringify(rows[0]) + "\n";
-        const testRec = normalizeRecord(rows[0]);
-        DEBUG_INFO += "PARSE: " + JSON.stringify(testRec) + "\n";
+        DEBUG_INFO += name + " KOLONLAR: " + keys.join(" | ") + "\n";
       }
       
       let count = 0;
       let skipped = 0;
+      const recs = [];
       rows.forEach(raw => {
         const rec = normalizeRecord(raw);
-        if (rec) { allRecords.push(rec); count++; }
+        if (rec) { recs.push(rec); count++; }
         else { skipped++; }
       });
-      DEBUG_INFO += name + ": " + rows.length + " CSV satırı, " + count + " geçerli, " + skipped + " atlandı\n";
+      DEBUG_INFO += name + ": " + rows.length + " satır, " + count + " geçerli, " + skipped + " atlandı\n";
+      updateProgress(name);
+      return recs;
     } catch (e) {
       DEBUG_INFO += name + ": HATA - " + e.message + "\n";
+      updateProgress(name);
+      return [];
     }
-  }
+  }));
+
+  results.forEach(r => { if (r.status === "fulfilled") allRecords.push(...r.value); });
 
   ALL_DATA = allRecords;
   
@@ -1870,7 +1890,7 @@ function setPreset(p) {
     setState({ sd: d.toISOString().split("T")[0], ed: today });
   }
   else if (p === "month") setState({ sd: month + "-01", ed: today });
-  else if (p === "all") setState({ sd: year + "-01-01", ed: today });
+  else if (p === "all") setState({ sd: "2019-01-01", ed: today });
 }
 
 function toggleExp(key) {
