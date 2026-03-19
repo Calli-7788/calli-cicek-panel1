@@ -2019,6 +2019,195 @@ function render() {
       html += `<div><div style="font-size:9px;color:#64748b">Toplam Net</div><div style="font-size:18px;font-weight:800;color:#60a5fa">${fmt(yilListesi.reduce((s,y) => s+y.net, 0))}</div><div style="font-size:8px;color:#475569">${yilListesi.length} yıl toplam</div></div>`;
       html += `</div></div>`;
     }
+
+    // ══════════════ RİSK ANALİZİ BÖLÜMÜ ══════════════
+    html += `<div class="sec-title" style="margin-top:24px">⚡ Risk Analizi</div>`;
+    html += `<div style="font-size:12px;color:#94a3b8;margin-bottom:14px;margin-top:-6px">Volatilite, güvenli limanlar ve şube güvenilirlik skorları</div>`;
+
+    // ── Çiçek Volatilite Skoru ──
+    const cicekVolatilite = [];
+    FLOWERS.forEach(cicek => {
+      const cicekData = ALL_DATA.filter(r => r.c === cicek);
+      if (cicekData.length < 5) return;
+      // Günlük dm başı net hesapla
+      const gunMap = {};
+      cicekData.forEach(r => {
+        if (!gunMap[r.t]) gunMap[r.t] = { net: 0, d: 0 };
+        gunMap[r.t].net += r.net; gunMap[r.t].d += r.d;
+      });
+      const gunFiyatlar = Object.values(gunMap).filter(v => v.d > 0).map(v => v.net / v.d);
+      if (gunFiyatlar.length < 3) return;
+
+      const ort = gunFiyatlar.reduce((s, x) => s + x, 0) / gunFiyatlar.length;
+      const varyans = gunFiyatlar.reduce((s, x) => s + Math.pow(x - ort, 2), 0) / gunFiyatlar.length;
+      const stdSapma = Math.sqrt(varyans);
+      const cv = ort > 0 ? (stdSapma / ort * 100) : 0; // Varyasyon katsayısı
+      const minF = Math.min(...gunFiyatlar);
+      const maxF = Math.max(...gunFiyatlar);
+      const range = maxF - minF;
+
+      // Son 30 gün trendi
+      const son30 = new Date(); son30.setDate(son30.getDate() - 30);
+      const son30str = son30.toISOString().split("T")[0];
+      const recentData = cicekData.filter(r => r.t >= son30str);
+      const recentDbn = recentData.reduce((s,r) => s+r.d, 0) > 0 ? recentData.reduce((s,r) => s+r.net, 0) / recentData.reduce((s,r) => s+r.d, 0) : 0;
+
+      // Risk skoru: 0-100 (düşük = güvenli, yüksek = riskli)
+      let riskSkoru = Math.min(100, Math.round(cv * 1.5));
+      let riskLabel, riskColor, riskBg;
+      if (riskSkoru <= 25) { riskLabel = "Düşük Risk"; riskColor = "#4ade80"; riskBg = "rgba(34,197,94,0.1)"; }
+      else if (riskSkoru <= 50) { riskLabel = "Orta Risk"; riskColor = "#fbbf24"; riskBg = "rgba(250,204,21,0.1)"; }
+      else if (riskSkoru <= 75) { riskLabel = "Yüksek Risk"; riskColor = "#fb923c"; riskBg = "rgba(251,146,60,0.1)"; }
+      else { riskLabel = "Çok Yüksek"; riskColor = "#f87171"; riskBg = "rgba(239,68,68,0.1)"; }
+
+      cicekVolatilite.push({
+        cicek, ort, stdSapma, cv, minF, maxF, range, riskSkoru, riskLabel, riskColor, riskBg,
+        gunSayisi: gunFiyatlar.length, toplamD: cicekData.reduce((s,r) => s+r.d, 0), recentDbn
+      });
+    });
+    cicekVolatilite.sort((a, b) => a.riskSkoru - b.riskSkoru);
+
+    if (cicekVolatilite.length > 0) {
+      // Güvenli Liman Çiçekleri
+      const guvenliCicekler = cicekVolatilite.filter(c => c.riskSkoru <= 30);
+      const riskliCicekler = cicekVolatilite.filter(c => c.riskSkoru > 60);
+
+      if (guvenliCicekler.length > 0) {
+        html += `<div class="card" style="margin-bottom:14px;background:rgba(34,197,94,0.06);border-color:rgba(34,197,94,0.12)">`;
+        html += `<div style="font-size:13px;font-weight:700;color:#4ade80;margin-bottom:10px">🛡 Güvenli Liman Çiçekleri</div>`;
+        html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Fiyatı istikrarlı, düşük volatilite — güvenle gönderebilirsin</div>`;
+        guvenliCicekler.slice(0, 5).forEach(c => {
+          html += `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid rgba(255,255,255,0.03)">`;
+          html += `<div style="flex:1"><div style="font-size:12px;font-weight:600;color:#e2e8f0">${esc(c.cicek)}</div><div style="font-size:9px;color:#64748b">Bant: ${fmt(c.minF)}–${fmt(c.maxF)} · ${c.gunSayisi} gün veri</div></div>`;
+          html += `<div style="text-align:right"><div style="font-size:13px;font-weight:700;color:#4ade80">${fmt(c.ort)}</div><div style="font-size:9px;color:#4ade80">Risk: ${c.riskSkoru}/100</div></div>`;
+          html += `</div>`;
+        });
+        html += `</div>`;
+      }
+
+      if (riskliCicekler.length > 0) {
+        html += `<div class="card" style="margin-bottom:14px;background:rgba(239,68,68,0.04);border-color:rgba(239,68,68,0.1)">`;
+        html += `<div style="font-size:13px;font-weight:700;color:#f87171;margin-bottom:10px">⚠ Yüksek Volatilite Çiçekleri</div>`;
+        html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Fiyatı çok dalgalı — dikkatli gönder, güvenli stratejide riskli</div>`;
+        riskliCicekler.slice(0, 5).forEach(c => {
+          html += `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid rgba(255,255,255,0.03)">`;
+          html += `<div style="flex:1"><div style="font-size:12px;font-weight:600;color:#e2e8f0">${esc(c.cicek)}</div><div style="font-size:9px;color:#64748b">Bant: ${fmt(c.minF)}–${fmt(c.maxF)} · Std sapma: ${c.stdSapma.toFixed(1)}₺</div></div>`;
+          html += `<div style="text-align:right"><div style="font-size:13px;font-weight:700;color:#f87171">${fmt(c.ort)}</div><div style="font-size:9px;color:#f87171">Risk: ${c.riskSkoru}/100</div></div>`;
+          html += `</div>`;
+        });
+        html += `</div>`;
+      }
+
+      // Tüm çiçekler risk tablosu
+      html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:10px">📊 Çiçek Risk Haritası</div>`;
+      const riskShow = state.expanded.riskCicek ? 999 : 10;
+      cicekVolatilite.slice(0, riskShow).forEach((c, i) => {
+        const barW = Math.min(100, c.riskSkoru);
+        html += `<div style="padding:8px 0;border-top:${i>0?'1px solid rgba(255,255,255,0.03)':'none'}">`;
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">`;
+        html += `<div style="font-size:12px;font-weight:500;color:#e2e8f0">${esc(c.cicek)}</div>`;
+        html += `<div style="display:flex;align-items:center;gap:6px"><span style="font-size:10px;padding:2px 6px;border-radius:4px;background:${c.riskBg};color:${c.riskColor};font-weight:600">${c.riskLabel}</span><span style="font-size:11px;color:#94a3b8;font-weight:700">${c.riskSkoru}</span></div>`;
+        html += `</div>`;
+        html += `<div style="display:flex;align-items:center;gap:8px">`;
+        html += `<div style="flex:1;height:4px;background:rgba(255,255,255,0.04);border-radius:2px"><div style="height:100%;border-radius:2px;width:${barW}%;background:linear-gradient(90deg,#22c55e,#fbbf24,#f87171)"></div></div>`;
+        html += `<div style="font-size:9px;color:#64748b;white-space:nowrap">${fmt(c.minF)}–${fmt(c.maxF)}</div>`;
+        html += `</div></div>`;
+      });
+      if (cicekVolatilite.length > 10) html += `<button class="show-more" onclick="toggleExp('riskCicek')">${state.expanded.riskCicek?'Daha az ▲':'Tümü ('+cicekVolatilite.length+') ▼'}</button>`;
+      html += `</div>`;
+    }
+
+    // ── Şube Güvenilirlik Skoru ──
+    const subeGuvenilirlik = [];
+    BRANCHES.forEach(sube => {
+      const subeData = ALL_DATA.filter(r => r.s === sube);
+      if (subeData.length < 5) return;
+      const gunMap = {};
+      subeData.forEach(r => {
+        if (!gunMap[r.t]) gunMap[r.t] = { net: 0, d: 0 };
+        gunMap[r.t].net += r.net; gunMap[r.t].d += r.d;
+      });
+      const gunFiyatlar = Object.values(gunMap).filter(v => v.d > 0).map(v => v.net / v.d);
+      if (gunFiyatlar.length < 3) return;
+
+      const ort = gunFiyatlar.reduce((s, x) => s + x, 0) / gunFiyatlar.length;
+      const varyans = gunFiyatlar.reduce((s, x) => s + Math.pow(x - ort, 2), 0) / gunFiyatlar.length;
+      const stdSapma = Math.sqrt(varyans);
+      const cv = ort > 0 ? (stdSapma / ort * 100) : 0;
+
+      // Aktivite sürekliliği: kaç farklı ay aktif
+      const aktifAylar = new Set(subeData.map(r => r.t.substring(0, 7))).size;
+      const toplamD = subeData.reduce((s, r) => s + r.d, 0);
+      const toplamNet = subeData.reduce((s, r) => s + r.net, 0);
+
+      // Güvenilirlik skoru: düşük CV + yüksek aktivite + yüksek hacim = güvenilir
+      // 0-100 arası (yüksek = güvenilir)
+      const cvScore = Math.max(0, 100 - cv * 1.5);
+      const aktiviteScore = Math.min(100, aktifAylar * 2);
+      const hacimScore = Math.min(100, Math.log10(toplamD + 1) * 25);
+      const guvenScore = Math.round(cvScore * 0.5 + aktiviteScore * 0.25 + hacimScore * 0.25);
+
+      let guvenLabel, guvenColor;
+      if (guvenScore >= 75) { guvenLabel = "Çok Güvenilir"; guvenColor = "#4ade80"; }
+      else if (guvenScore >= 55) { guvenLabel = "Güvenilir"; guvenColor = "#6ee7b7"; }
+      else if (guvenScore >= 40) { guvenLabel = "Orta"; guvenColor = "#fbbf24"; }
+      else { guvenLabel = "Dikkatli Ol"; guvenColor = "#f87171"; }
+
+      subeGuvenilirlik.push({ sube, ort, cv, stdSapma, aktifAylar, toplamD, toplamNet, guvenScore, guvenLabel, guvenColor, gunSayisi: gunFiyatlar.length });
+    });
+    subeGuvenilirlik.sort((a, b) => b.guvenScore - a.guvenScore);
+
+    if (subeGuvenilirlik.length > 0) {
+      html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:10px">📍 Şube Güvenilirlik Skoru</div>`;
+      html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Fiyat istikrarı + süreklilik + hacim bazlı skor</div>`;
+      const subeRiskShow = state.expanded.riskSube ? 999 : 8;
+      subeGuvenilirlik.slice(0, subeRiskShow).forEach((s, i) => {
+        const barW = Math.min(100, s.guvenScore);
+        html += `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:${i>0?'1px solid rgba(255,255,255,0.03)':'none'}">`;
+        html += `<div style="width:20px;text-align:center;font-size:10px;font-weight:700;color:${i<3?'#fbbf24':'#475569'}">${i+1}</div>`;
+        html += `<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.sube)}</div>`;
+        html += `<div style="display:flex;align-items:center;gap:4px;margin-top:3px"><div style="flex:1;height:4px;background:rgba(255,255,255,0.04);border-radius:2px;max-width:120px"><div style="height:100%;border-radius:2px;width:${barW}%;background:${s.guvenColor}"></div></div><span style="font-size:8px;color:#475569">${s.aktifAylar} ay · ${new Intl.NumberFormat("tr-TR").format(s.toplamD)}dm</span></div></div>`;
+        html += `<div style="text-align:right"><div style="font-size:14px;font-weight:800;color:${s.guvenColor}">${s.guvenScore}</div><div style="font-size:8px;color:${s.guvenColor}">${s.guvenLabel}</div></div>`;
+        html += `</div>`;
+      });
+      if (subeGuvenilirlik.length > 8) html += `<button class="show-more" onclick="toggleExp('riskSube')">${state.expanded.riskSube?'Daha az ▲':'Tüm şubeler ('+subeGuvenilirlik.length+') ▼'}</button>`;
+      html += `</div>`;
+    }
+
+    // ── En Güvenli Kombinasyonlar ──
+    if (cicekVolatilite.length > 0 && subeGuvenilirlik.length > 0) {
+      html += `<div class="card" style="margin-bottom:14px;background:rgba(34,197,94,0.04);border-color:rgba(34,197,94,0.1)">`;
+      html += `<div style="font-size:13px;font-weight:700;color:#4ade80;margin-bottom:10px">🏆 En Güvenli Kombinasyonlar</div>`;
+      html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Düşük riskli çiçek + güvenilir şube = güvenle gönder</div>`;
+      const guvenliKombo = [];
+      const heatData = getHeatData(getFiltered());
+      heatData.forEach(h => {
+        const cicekRisk = cicekVolatilite.find(c => c.cicek === h.cicek);
+        const subeGuven = subeGuvenilirlik.find(s => s.sube === h.sube);
+        if (cicekRisk && subeGuven && h.d >= 3) {
+          const komboSkor = Math.round((100 - cicekRisk.riskSkoru) * 0.5 + subeGuven.guvenScore * 0.5);
+          guvenliKombo.push({ ...h, riskSkoru: cicekRisk.riskSkoru, guvenScore: subeGuven.guvenScore, komboSkor });
+        }
+      });
+      guvenliKombo.sort((a, b) => b.komboSkor - a.komboSkor);
+      guvenliKombo.slice(0, 8).forEach((k, i) => {
+        const komboColor = k.komboSkor >= 70 ? "#4ade80" : k.komboSkor >= 50 ? "#fbbf24" : "#f87171";
+        html += `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-top:${i>0?'1px solid rgba(255,255,255,0.03)':'none'}">`;
+        html += `<div style="width:18px;text-align:center;font-size:10px;font-weight:700;color:${i<3?'#fbbf24':'#475569'}">${i+1}</div>`;
+        html += `<div style="flex:1;min-width:0"><div style="font-size:11px;font-weight:600;color:#e2e8f0">${esc(k.cicek)} → ${esc(k.sube)}</div><div style="font-size:9px;color:#64748b">${k.d}dm · ${fmt(k.dbn)}/dm net</div></div>`;
+        html += `<div style="text-align:right"><div style="font-size:13px;font-weight:800;color:${komboColor}">${k.komboSkor}</div><div style="font-size:7px;color:#475569">R:${k.riskSkoru} G:${k.guvenScore}</div></div>`;
+        html += `</div>`;
+      });
+      html += `</div>`;
+    }
+
+    // Risk açıklama
+    html += `<div style="padding:10px;border-radius:8px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);font-size:10px;color:#475569;line-height:1.5">`;
+    html += `<strong style="color:#64748b">Risk skoru nasıl hesaplanır?</strong><br>`;
+    html += `Çiçek riski: Fiyat volatilitesi (varyasyon katsayısı). Düşük = fiyatı istikrarlı.<br>`;
+    html += `Şube güvenilirliği: %50 fiyat istikrarı + %25 aktivite sürekliliği + %25 hacim.<br>`;
+    html += `Kombo skoru: Düşük riskli çiçek + güvenilir şube ortalaması. 100 = en güvenli.`;
+    html += `</div>`;
   }
 
   // ══ RAPOR ══
