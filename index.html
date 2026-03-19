@@ -300,7 +300,8 @@ let state = {
   planResult: null,
   planLoading: false,
   mevsimSearch: "",
-  mevsimFilter: "aktif"
+  mevsimFilter: "aktif",
+  mevsimDetail: null
 };
 
 function setState(updates) {
@@ -620,7 +621,58 @@ function getSeasonalData() {
   }
   ozelGunAnaliz.sort((a, b) => b.ortEtki - a.ortEtki);
 
-  return { aylarData, cicekMevsim, gunList, ort2026, yilDbn, ozelGunAnaliz, cicekAylik };
+  // Çiçek × Ay × Hafta bazlı mevsimsel veri
+  const cicekAyHafta = {};
+  ALL_DATA.forEach(r => {
+    const yil = r.t.substring(0, 4);
+    const ay = parseInt(r.t.substring(5, 7));
+    const d = new Date(r.t + "T00:00:00");
+    const haftaGunu = d.getDate();
+    const haftaNo = Math.ceil(haftaGunu / 7); // 1-5 arası hafta
+    const key = r.c + "|" + ay + "|" + haftaNo;
+    if (!cicekAyHafta[key]) cicekAyHafta[key] = {};
+    if (!cicekAyHafta[key][yil]) cicekAyHafta[key][yil] = { net: 0, d: 0 };
+    cicekAyHafta[key][yil].net += r.net; cicekAyHafta[key][yil].d += r.d;
+  });
+
+  // Her çiçeğin yıllık ortalamaları (çiçek bazlı)
+  const cicekYilOrtMap = {};
+  ALL_DATA.forEach(r => {
+    const yil = r.t.substring(0, 4);
+    if (!cicekYilOrtMap[r.c]) cicekYilOrtMap[r.c] = {};
+    if (!cicekYilOrtMap[r.c][yil]) cicekYilOrtMap[r.c][yil] = { net: 0, d: 0 };
+    cicekYilOrtMap[r.c][yil].net += r.net; cicekYilOrtMap[r.c][yil].d += r.d;
+  });
+
+  // Haftalık mevsimsel endeks hesapla
+  function getHaftalikEndeks(cicek, ay) {
+    const result = [];
+    for (let h = 1; h <= 5; h++) {
+      const key = cicek + "|" + ay + "|" + h;
+      const yilVerileri = cicekAyHafta[key] || {};
+      const yuzdeler = [];
+      let toplamD = 0;
+      Object.entries(yilVerileri).forEach(([yil, v]) => {
+        const cYilOrt = cicekYilOrtMap[cicek] && cicekYilOrtMap[cicek][yil];
+        const yilDbnC = cYilOrt && cYilOrt.d > 0 ? cYilOrt.net / cYilOrt.d : 0;
+        if (yilDbnC > 0 && v.d > 0) {
+          yuzdeler.push((v.net / v.d) / yilDbnC);
+          toplamD += v.d;
+        }
+      });
+      if (yuzdeler.length > 0) {
+        result.push({
+          hafta: h,
+          endeks: Math.round((yuzdeler.reduce((s, x) => s + x, 0) / yuzdeler.length) * 100),
+          yilSayisi: yuzdeler.length,
+          demet: toplamD
+        });
+      }
+    }
+    return result;
+  }
+
+  return { aylarData, cicekMevsim, gunList, ort2026, yilDbn, ozelGunAnaliz, cicekAylik, getHaftalikEndeks };
 }
 
 // ═══════════════ FİYAT TAHMİNİ ═══════════════
@@ -1651,15 +1703,17 @@ function render() {
 
     // ── Özel Günler ──
     if (sd.ozelGunAnaliz.length > 0) {
-      html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:10px">🎉 Özel Günler Fiyat Etkisi</div>`;
-      html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Özel gün öncesi fiyatlar ortalamanın ne kadar üstünde?</div>`;
+      html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:6px">🎉 Özel Günler Fiyat Etkisi</div>`;
+      html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Her özel gün öncesindeki ${sd.ozelGunAnaliz[0]?.oncesi||7} günlük fiyat, o yılın genel ortalamasıyla karşılaştırılır. Yıl bazlı hesaplanır, enflasyondan bağımsızdır.</div>`;
       sd.ozelGunAnaliz.forEach(og => {
         const etki = Math.round(og.ortEtki * 100);
         const fark = etki - 100;
         const isPositive = fark > 0;
+        const guvenLabel = og.yilSayisi >= 5 ? "Güvenilir" : og.yilSayisi >= 3 ? "Orta" : "Az veri";
+        const guvenColor = og.yilSayisi >= 5 ? "#4ade80" : og.yilSayisi >= 3 ? "#fbbf24" : "#f87171";
         html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.03)">`;
-        html += `<div><div style="font-size:12px;font-weight:600;color:#f8fafc">${og.ad}</div><div style="font-size:9px;color:#64748b">${og.oncesi} gün öncesinden · ${og.yilSayisi} yıl verisi</div></div>`;
-        html += `<div style="text-align:right"><span style="font-size:13px;font-weight:700;color:${isPositive?'#4ade80':'#f87171'}">${isPositive?'+':''}${fark}%</span></div>`;
+        html += `<div><div style="font-size:12px;font-weight:600;color:#f8fafc">${og.ad}</div><div style="font-size:9px;color:#64748b">${og.oncesi} gün öncesinden · <span style="color:${guvenColor}">${og.yilSayisi} yıl (${guvenLabel})</span></div></div>`;
+        html += `<div style="text-align:right"><span style="font-size:15px;font-weight:700;color:${isPositive?'#4ade80':'#f87171'}">${isPositive?'+':''}${fark}%</span></div>`;
         html += `</div>`;
       });
       // Yaklaşan özel gün uyarısı
@@ -1725,6 +1779,8 @@ function render() {
       html += `<div style="display:grid;grid-template-columns:100px repeat(12,1fr);gap:2px;margin-bottom:2px"><div style="font-size:9px;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:4px 0">${esc(item.cicek)}</div>`;
       for (let m = 1; m <= 12; m++) {
         const data = item.aylar[m];
+        const detailKey = item.cicek + "|" + m;
+        const isOpen = state.mevsimDetail === detailKey;
         if (!data) { html += `<div style="height:22px;border-radius:3px;background:rgba(255,255,255,0.01)"></div>`; }
         else {
           const idx = Math.round(data.ortYuzde * 100);
@@ -1734,10 +1790,48 @@ function render() {
           else if (idx >= 100) bg = "rgba(34,197,94,0.15)";
           else if (idx >= 90) bg = "rgba(250,204,21,0.15)";
           else bg = "rgba(239,68,68,0.15)";
-          html += `<div style="height:22px;border-radius:3px;background:${bg};display:flex;align-items:center;justify-content:center;font-size:7px;color:#e2e8f0;font-weight:600">${idx}</div>`;
+          html += `<div onclick="setState({mevsimDetail:state.mevsimDetail==='${esc(detailKey)}'?null:'${esc(detailKey)}'})" style="height:22px;border-radius:3px;background:${bg};display:flex;align-items:center;justify-content:center;font-size:7px;color:#e2e8f0;font-weight:600;cursor:pointer;${isOpen?'outline:2px solid #fbbf24;outline-offset:-1px;':''}">${idx}</div>`;
         }
       }
       html += `</div>`;
+      // Haftalık detay satırı — tıklanan ay açılır
+      if (state.mevsimDetail && state.mevsimDetail.startsWith(item.cicek + "|")) {
+        const detAy = parseInt(state.mevsimDetail.split("|")[1]);
+        const haftalik = sd.getHaftalikEndeks(item.cicek, detAy);
+        const ayAdi = ayAdlari[detAy] || "";
+        if (haftalik.length > 0) {
+          html += `<div style="grid-column:1/-1;padding:8px 10px;margin:-1px 0 4px;border-radius:8px;background:rgba(250,204,21,0.06);border:1px solid rgba(250,204,21,0.12)">`;
+          html += `<div style="font-size:10px;font-weight:600;color:#fbbf24;margin-bottom:6px">${esc(item.cicek)} — ${ayAdi} Haftalık Detay</div>`;
+          html += `<div style="display:flex;gap:6px;align-items:flex-end">`;
+          const maxIdx = Math.max(...haftalik.map(h => h.endeks));
+          const minIdx = Math.min(...haftalik.map(h => h.endeks));
+          haftalik.forEach(h => {
+            const barH = maxIdx > 0 ? Math.max(8, (h.endeks / maxIdx) * 50) : 8;
+            const isBest = h.endeks === maxIdx && haftalik.length > 1;
+            const isWorst = h.endeks === minIdx && haftalik.length > 1 && maxIdx !== minIdx;
+            let barBg;
+            if (h.endeks >= 115) barBg = "#4ade80";
+            else if (h.endeks >= 105) barBg = "#6ee7b7";
+            else if (h.endeks >= 95) barBg = "#94a3b8";
+            else if (h.endeks >= 85) barBg = "#fbbf24";
+            else barBg = "#f87171";
+            html += `<div style="flex:1;text-align:center">`;
+            html += `<div style="font-size:10px;font-weight:700;color:${isBest?'#4ade80':isWorst?'#f87171':'#e2e8f0'};margin-bottom:2px">${h.endeks}</div>`;
+            html += `<div style="height:${barH}px;border-radius:3px;background:${barBg};margin-bottom:3px;${isBest?'outline:2px solid #4ade80;outline-offset:1px':''}"></div>`;
+            html += `<div style="font-size:8px;color:#94a3b8">H${h.hafta}</div>`;
+            html += `<div style="font-size:7px;color:#475569">${h.demet}dm</div>`;
+            html += `<div style="font-size:7px;color:#475569">${h.yilSayisi}yıl</div>`;
+            html += `</div>`;
+          });
+          html += `</div>`;
+          if (maxIdx > minIdx) {
+            const bestH = haftalik.find(h => h.endeks === maxIdx);
+            const worstH = haftalik.find(h => h.endeks === minIdx);
+            html += `<div style="margin-top:6px;font-size:10px;color:#94a3b8">💡 En iyi: <span style="color:#4ade80;font-weight:600">Hafta ${bestH.hafta} (${bestH.endeks})</span> · En düşük: <span style="color:#f87171">Hafta ${worstH.hafta} (${worstH.endeks})</span></div>`;
+          }
+          html += `</div>`;
+        }
+      }
     });
     html += `</div></div>`;
     html += `<div style="font-size:9px;color:#475569;margin-top:4px">${cicekSirali.length} çiçek gösteriliyor</div>`;
@@ -1931,14 +2025,6 @@ function render() {
       html += `</div>`;
     }
     // Riskli çiçekler
-    const riskliCicekler = cicekVolatilite.filter(c => c.riskSkoru > 60);
-    if (riskliCicekler.length > 0) {
-      html += `<div class="card" style="margin-bottom:14px;background:rgba(239,68,68,0.04);border-color:rgba(239,68,68,0.1)"><div style="font-size:13px;font-weight:700;color:#f87171;margin-bottom:10px">⚠ Yüksek Volatilite</div>`;
-      riskliCicekler.slice(0, 5).forEach(c => {
-        html += `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid rgba(255,255,255,0.03)"><div style="flex:1"><div style="font-size:12px;font-weight:600;color:#e2e8f0">${esc(c.cicek)}</div><div style="font-size:9px;color:#64748b">${fmt(c.minF)}–${fmt(c.maxF)} · ${new Intl.NumberFormat("tr-TR").format(c.toplamD)}dm</div></div><div style="text-align:right"><div style="font-size:13px;font-weight:700;color:#f87171">${fmt(c.ort)}</div><div style="font-size:9px;color:#f87171">Risk: ${c.riskSkoru}</div></div></div>`;
-      });
-      html += `</div>`;
-    }
     // Risk haritası
     if (cicekVolatilite.length > 0) {
       html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:10px">📊 Tüm Çiçekler Risk Skoru</div>`;
