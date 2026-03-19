@@ -301,7 +301,9 @@ let state = {
   planLoading: false,
   mevsimSearch: "",
   mevsimFilter: "aktif",
-  mevsimDetail: null
+  mevsimDetail: null,
+  caSecim: null,
+  caSearch: ""
 };
 
 function setState(updates) {
@@ -1074,7 +1076,7 @@ function render() {
   html += `</div>`;
 
   // Tabs
-  const tabList = [{id:"panel",l:"Panel",i:"◉"},{id:"plan",l:"Planlayıcı",i:"🎯"},{id:"sube",l:"Şube Tablosu",i:"📋"},{id:"compare",l:"Karşılaştır",i:"⚡"},{id:"heat",l:"Kâr Haritası",i:"🔥"},{id:"tablo",l:"Tablo",i:"☰"},{id:"yoy",l:"Geçen Yıl",i:"📊"},{id:"mevsim",l:"Mevsimsellik",i:"🗓"},{id:"tahtrend",l:"Tahmin & Risk",i:"🔮"},{id:"rapor",l:"Rapor",i:"📄"},{id:"ai",l:"AI",i:"✦"}];
+  const tabList = [{id:"panel",l:"Panel",i:"◉"},{id:"plan",l:"Planlayıcı",i:"🎯"},{id:"sube",l:"Şube Tablosu",i:"📋"},{id:"compare",l:"Karşılaştır",i:"⚡"},{id:"heat",l:"Kâr Haritası",i:"🔥"},{id:"tablo",l:"Tablo",i:"☰"},{id:"yoy",l:"Geçen Yıl",i:"📊"},{id:"mevsim",l:"Mevsimsellik",i:"🗓"},{id:"cicekanaliz",l:"Çiçek Analiz",i:"🌷"},{id:"tahtrend",l:"Tahmin & Risk",i:"🔮"},{id:"rapor",l:"Rapor",i:"📄"},{id:"ai",l:"AI",i:"✦"}];
   html += `<div class="tabs">`;
   tabList.forEach(t => {
     html += `<button class="tab-btn ${state.tab===t.id?'active':''}" onclick="setState({tab:'${t.id}',ddOpen:null})">${t.i} ${t.l}</button>`;
@@ -1838,6 +1840,137 @@ function render() {
     }
 
     html += `<div style="padding:10px;border-radius:8px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);font-size:10px;color:#475569;line-height:1.5"><strong style="color:#64748b">Nasıl çalışır?</strong><br>Her ayın fiyatı o yılın kendi ortalamasına bölünerek mevsimsel endeks hesaplanır. Bu sayede enflasyondan bağımsız, gerçek mevsimsel örüntüler ortaya çıkar. 100 = yıl ortalaması, 120 = ortalamanın %20 üstü.</div>`;
+  }
+
+  // ══ ÇİÇEK ANALİZ ══
+  if (state.tab === "cicekanaliz") {
+    const sd = getSeasonalData();
+    const buAy = new Date().getMonth() + 1;
+    const ayAdlari = ["","Ocak","Şubat","Mart","Nisan","Mayıs","Haziran","Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"];
+    const ayKisa = ["","O","Ş","M","N","M","H","T","A","E","E","K","A"];
+
+    html += `<div class="sec-title">🌷 Çiçek Bazlı Mevsimsel Analiz</div>`;
+    html += `<div style="font-size:12px;color:#94a3b8;margin-bottom:14px;margin-top:-6px">Çiçek seç → aylık endeks + fiyat projeksiyonu + haftalık detay</div>`;
+
+    // Arama + çiçek seçimi
+    html += `<input id="caSearch" type="text" placeholder="Çiçek ara..." value="${state.caSearch||''}" oninput="state.caSearch=this.value;clearTimeout(window._caTmr);window._caTmr=setTimeout(function(){window._msScroll=window.scrollY;var el=document.getElementById('caSearch');var pos=el?el.selectionStart:0;render();setTimeout(function(){var el2=document.getElementById('caSearch');if(el2){el2.focus();el2.setSelectionRange(pos,pos)}},200)},200)" style="width:100%;padding:8px 12px;border-radius:8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);color:#e5e7eb;font-size:11px;margin-bottom:8px;outline:none">`;
+
+    // Çiçek listesi — filtrelenmiş
+    const son3Ay = [buAy, buAy > 1 ? buAy - 1 : 12, buAy > 2 ? buAy - 2 : buAy === 2 ? 12 : 11];
+    let caList = Object.entries(sd.cicekMevsim).map(([c, aylar]) => ({ cicek: c, aylar, totalD: Object.values(aylar).reduce((s, a) => s + a.totalD, 0) })).filter(item => !item.cicek.toLowerCase().includes("saksı") && !item.cicek.toLowerCase().includes("saksi")).sort((a, b) => b.totalD - a.totalD);
+    if (state.caSearch && state.caSearch.trim()) {
+      const q = state.caSearch.trim().toUpperCase();
+      caList = caList.filter(item => item.cicek.toUpperCase().includes(q));
+    }
+
+    // Çiçek butonları (top 20 veya arama sonuçları)
+    html += `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:14px">`;
+    caList.slice(0, 20).forEach(item => {
+      const isActive = state.caSecim === item.cicek;
+      html += `<button onclick="setState({caSecim:'${esc(item.cicek)}'})" style="padding:5px 10px;border-radius:6px;border:1px solid ${isActive?'#7c3aed':'rgba(255,255,255,0.08)'};background:${isActive?'rgba(124,58,237,0.2)':'rgba(255,255,255,0.04)'};color:${isActive?'#c4b5fd':'#94a3b8'};font-size:10px;cursor:pointer;font-weight:${isActive?'700':'400'}">${esc(item.cicek)}</button>`;
+    });
+    html += `</div>`;
+
+    // Seçili çiçek detayı
+    const secili = state.caSecim ? caList.find(c => c.cicek === state.caSecim) : caList[0];
+    if (secili) {
+      if (!state.caSecim) state.caSecim = secili.cicek;
+      const cicekMevsim = secili.aylar;
+
+      // ── Aylık Mevsimsel Endeks (çiçek bazlı) ──
+      html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#c4b5fd;margin-bottom:8px">📊 ${esc(secili.cicek)} — Aylık Mevsimsel Endeks</div>`;
+      html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">100 = bu çiçeğin yıl ortalaması</div>`;
+      html += `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">`;
+      for (let m = 1; m <= 12; m++) {
+        const data = cicekMevsim[m];
+        const isBuAy = m === buAy;
+        if (!data) {
+          html += `<div style="padding:8px 4px;text-align:center;border-radius:8px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04)"><div style="font-size:10px;color:#333">${ayKisa[m]}</div><div style="font-size:12px;color:#333">—</div></div>`;
+        } else {
+          const idx = Math.round(data.ortYuzde * 100);
+          let bg, cl;
+          if (idx >= 115) { bg = "rgba(34,197,94,0.2)"; cl = "#4ade80"; }
+          else if (idx >= 105) { bg = "rgba(34,197,94,0.1)"; cl = "#6ee7b7"; }
+          else if (idx >= 95) { bg = "rgba(255,255,255,0.04)"; cl = "#e2e8f0"; }
+          else if (idx >= 85) { bg = "rgba(239,68,68,0.08)"; cl = "#fca5a5"; }
+          else { bg = "rgba(239,68,68,0.15)"; cl = "#f87171"; }
+          const border = isBuAy ? "border:2px solid #fbbf24" : "border:1px solid rgba(255,255,255,0.06)";
+          html += `<div style="padding:8px 4px;text-align:center;border-radius:8px;background:${bg};${border};cursor:pointer" onclick="setState({mevsimDetail:state.mevsimDetail==='ca_${esc(secili.cicek)}|${m}'?null:'ca_${esc(secili.cicek)}|${m}'})">`;
+          html += `<div style="font-size:10px;color:#94a3b8">${ayAdlari[m]}${isBuAy?' 📍':''}</div>`;
+          html += `<div style="font-size:18px;font-weight:800;color:${cl}">${idx}</div>`;
+          html += `<div style="font-size:8px;color:#475569">${data.yilSayisi} yıl</div>`;
+          // Haftalık detay açılmış mı?
+          if (state.mevsimDetail === 'ca_' + secili.cicek + '|' + m) {
+            const haftalik = sd.getHaftalikEndeks(secili.cicek, m);
+            if (haftalik.length > 0) {
+              html += `<div style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.08);display:flex;gap:2px;justify-content:center">`;
+              const maxH = Math.max(...haftalik.map(h => h.endeks));
+              const minH = Math.min(...haftalik.map(h => h.endeks));
+              haftalik.forEach(h => {
+                const hCl = h.endeks === maxH && haftalik.length > 1 ? "#4ade80" : h.endeks === minH && haftalik.length > 1 && maxH !== minH ? "#f87171" : "#94a3b8";
+                html += `<div style="font-size:7px;color:${hCl};font-weight:600;line-height:1.3">H${h.hafta}<br>${h.endeks}</div>`;
+              });
+              html += `</div>`;
+            }
+          }
+          html += `</div>`;
+        }
+      }
+      html += `</div></div>`;
+
+      // ── 2026 Fiyat Projeksiyonu (çiçek bazlı) ──
+      const cicek2026 = ALL_DATA.filter(r => r.t.startsWith("2026") && r.c === secili.cicek);
+      const cicekOrt2026 = cicek2026.reduce((s,r) => s+r.d, 0) > 0 ? cicek2026.reduce((s,r) => s+r.net, 0) / cicek2026.reduce((s,r) => s+r.d, 0) : 0;
+
+      if (cicekOrt2026 > 0) {
+        html += `<div class="card" style="margin-bottom:14px;background:rgba(168,85,247,0.06);border-color:rgba(168,85,247,0.12)">`;
+        html += `<div style="font-size:13px;font-weight:700;color:#c4b5fd;margin-bottom:8px">🔮 ${esc(secili.cicek)} — 2026 Fiyat Projeksiyonu</div>`;
+        html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">2026 ort: ${fmt(cicekOrt2026)}/dm × mevsimsel endeks</div>`;
+        html += `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">`;
+        for (let m = 1; m <= 12; m++) {
+          const data = cicekMevsim[m];
+          const isBuAy = m === buAy;
+          const isPast = m < buAy;
+          if (!data) {
+            html += `<div style="padding:6px 4px;text-align:center;border-radius:8px;background:rgba(255,255,255,0.02)"><div style="font-size:9px;color:#333">${ayKisa[m]}</div><div style="font-size:10px;color:#333">—</div></div>`;
+          } else {
+            const proj = cicekOrt2026 * data.ortYuzde;
+            html += `<div style="padding:6px 4px;text-align:center;border-radius:8px;background:${isBuAy?'rgba(250,204,21,0.1)':'rgba(255,255,255,0.03)'};border:1px solid ${isBuAy?'rgba(250,204,21,0.2)':'rgba(255,255,255,0.04)'}">`;
+            html += `<div style="font-size:9px;color:${isPast?'#475569':'#94a3b8'}">${ayAdlari[m]}</div>`;
+            html += `<div style="font-size:14px;font-weight:700;color:${isBuAy?'#fbbf24':isPast?'#64748b':'#c4b5fd'}">${fmt(proj)}</div>`;
+            html += `</div>`;
+          }
+        }
+        html += `</div></div>`;
+      }
+
+      // ── Bu Ay Karşılaştırma (çiçek bazlı) ──
+      const buAyMevsim = cicekMevsim[buAy];
+      if (buAyMevsim && cicekOrt2026 > 0) {
+        const buAyData = cicek2026.filter(r => parseInt(r.t.substring(5,7)) === buAy);
+        const buAyDbn = buAyData.reduce((s,r) => s+r.d, 0) > 0 ? buAyData.reduce((s,r) => s+r.net, 0) / buAyData.reduce((s,r) => s+r.d, 0) : 0;
+        const beklenen = cicekOrt2026 * buAyMevsim.ortYuzde;
+        const fark = beklenen > 0 ? ((buAyDbn - beklenen) / beklenen * 100) : 0;
+        if (buAyDbn > 0) {
+          html += `<div class="card" style="margin-bottom:14px;background:${fark>=0?'rgba(34,197,94,0.06)':'rgba(239,68,68,0.06)'};border-color:${fark>=0?'rgba(34,197,94,0.12)':'rgba(239,68,68,0.12)'}">`;
+          html += `<div style="font-size:12px;font-weight:700;color:${fark>=0?'#4ade80':'#f87171'};margin-bottom:6px">📍 ${ayAdlari[buAy]} — ${fark>=0?'Beklentinin Üstünde':'Beklentinin Altında'}</div>`;
+          html += `<div style="display:flex;gap:14px;font-size:12px"><div><div style="font-size:9px;color:#64748b">Beklenen</div><div style="font-size:15px;font-weight:800;color:#94a3b8">${fmt(beklenen)}</div></div><div><div style="font-size:9px;color:#64748b">Gerçekleşen</div><div style="font-size:15px;font-weight:800;color:#f8fafc">${fmt(buAyDbn)}</div></div><div><div style="font-size:9px;color:#64748b">Fark</div><div style="font-size:15px;font-weight:800;color:${fark>=0?'#4ade80':'#f87171'}">${fark>=0?'+':''}${fark.toFixed(1)}%</div></div></div></div>`;
+        }
+      }
+
+      // ── Aktif aylar özeti ──
+      const aktifAylar = Object.keys(cicekMevsim).map(Number).sort((a,b) => a - b);
+      const enIyiAy = aktifAylar.reduce((best, m) => cicekMevsim[m].ortYuzde > (cicekMevsim[best]?.ortYuzde || 0) ? m : best, aktifAylar[0]);
+      const enKotuAy = aktifAylar.reduce((worst, m) => cicekMevsim[m].ortYuzde < (cicekMevsim[worst]?.ortYuzde || 999) ? m : worst, aktifAylar[0]);
+      html += `<div style="padding:8px 10px;border-radius:8px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.04);font-size:11px;color:#94a3b8;margin-bottom:14px">`;
+      html += `Aktif aylar: <strong style="color:#e2e8f0">${aktifAylar.map(m => ayKisa[m]).join(", ")}</strong> (${aktifAylar.length} ay)`;
+      html += ` · En iyi: <strong style="color:#4ade80">${ayAdlari[enIyiAy]} (${Math.round(cicekMevsim[enIyiAy].ortYuzde * 100)})</strong>`;
+      html += ` · En düşük: <strong style="color:#f87171">${ayAdlari[enKotuAy]} (${Math.round(cicekMevsim[enKotuAy].ortYuzde * 100)})</strong>`;
+      html += `</div>`;
+
+    } else {
+      html += `<div class="card" style="text-align:center;padding:30px;color:#475569;font-size:13px">Çiçek bulunamadı. Arama terimini değiştirin.</div>`;
+    }
   }
 
   // ══ TAHMİN & RİSK ══
