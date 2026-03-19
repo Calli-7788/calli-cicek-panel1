@@ -442,6 +442,185 @@ function getPDFReportData(filtered) {
   return { stats, branchList, prevSD, prevED, prevTotalNet, prevTotalD, prevTotalDbn, hasPrev: prevData.length > 0, currentMezatCount: mezatCount, prevMezatCount: prevMezatDays.length };
 }
 
+// ═══════════════ MEVSİMSELLİK ANALİZİ ═══════════════
+const OZEL_GUNLER = [
+  { tarih: "01-01", ad: "Yılbaşı", oncesi: 7 },
+  { tarih: "02-14", ad: "Sevgililer Günü", oncesi: 7 },
+  { tarih: "03-08", ad: "Dünya Kadınlar Günü", oncesi: 5 },
+  { tarih: "04-23", ad: "23 Nisan", oncesi: 3 },
+  { tarih: "05-01", ad: "1 Mayıs", oncesi: 2 },
+  { tarih: "05-19", ad: "19 Mayıs", oncesi: 2 },
+  { tarih: "08-30", ad: "30 Ağustos", oncesi: 2 },
+  { tarih: "10-29", ad: "Cumhuriyet Bayramı", oncesi: 3 },
+  { tarih: "11-10", ad: "10 Kasım", oncesi: 2 },
+  { tarih: "11-24", ad: "Öğretmenler Günü", oncesi: 5 },
+  { tarih: "12-31", ad: "Yılbaşı Gecesi", oncesi: 7 }
+];
+// Anneler Günü: Mayıs'ın 2. Pazarı — her yıl değişir, dinamik hesaplanır
+function getAnnelerGunu(yil) {
+  const mayis1 = new Date(yil, 4, 1);
+  const gun = mayis1.getDay();
+  const ilkPazar = gun === 0 ? 1 : 8 - gun;
+  const ikinciPazar = ilkPazar + 7;
+  return yil + "-05-" + String(ikinciPazar).padStart(2, "0");
+}
+
+function getSeasonalData() {
+  // Her yılın kendi ortalaması
+  const yilOrt = {};
+  ALL_DATA.forEach(r => {
+    const yil = r.t.substring(0, 4);
+    if (!yilOrt[yil]) yilOrt[yil] = { net: 0, d: 0 };
+    yilOrt[yil].net += r.net; yilOrt[yil].d += r.d;
+  });
+  const yilDbn = {};
+  Object.entries(yilOrt).forEach(([y, v]) => { yilDbn[y] = v.d > 0 ? v.net / v.d : 0; });
+
+  // Aylık mevsimsel yüzde (her ayı o yılın ortalamasına böl)
+  const aylik = {}; // { "01": { yuzde: [1.05, 0.98, ...], years: [...] }, "02": ... }
+  ALL_DATA.forEach(r => {
+    const yil = r.t.substring(0, 4);
+    const ay = r.t.substring(5, 7);
+    const key = ay;
+    if (!aylik[key]) aylik[key] = {};
+    if (!aylik[key][yil]) aylik[key][yil] = { net: 0, d: 0 };
+    aylik[key][yil].net += r.net; aylik[key][yil].d += r.d;
+  });
+
+  const aylarData = [];
+  const ayAdlari = ["Oca","Şub","Mar","Nis","May","Haz","Tem","Ağu","Eyl","Eki","Kas","Ara"];
+  for (let m = 1; m <= 12; m++) {
+    const key = String(m).padStart(2, "0");
+    const yilVerileri = aylik[key] || {};
+    const yuzdeler = [];
+    const yillar = [];
+    Object.entries(yilVerileri).forEach(([yil, v]) => {
+      if (yilDbn[yil] > 0 && v.d > 0) {
+        const ayDbn = v.net / v.d;
+        yuzdeler.push(ayDbn / yilDbn[yil]);
+        yillar.push(yil);
+      }
+    });
+    const ortYuzde = yuzdeler.length > 0 ? yuzdeler.reduce((s, x) => s + x, 0) / yuzdeler.length : null;
+    const totalD = Object.values(yilVerileri).reduce((s, v) => s + v.d, 0);
+    aylarData.push({
+      ay: m, ad: ayAdlari[m - 1], key,
+      ortYuzde, yuzdeler, yillar,
+      yilSayisi: yuzdeler.length, demet: totalD
+    });
+  }
+
+  // Çiçek bazlı mevsimsellik
+  const cicekAylik = {};
+  ALL_DATA.forEach(r => {
+    const yil = r.t.substring(0, 4);
+    const ay = parseInt(r.t.substring(5, 7));
+    if (!cicekAylik[r.c]) cicekAylik[r.c] = {};
+    if (!cicekAylik[r.c][ay]) cicekAylik[r.c][ay] = {};
+    if (!cicekAylik[r.c][ay][yil]) cicekAylik[r.c][ay][yil] = { net: 0, d: 0 };
+    cicekAylik[r.c][ay][yil].net += r.net; cicekAylik[r.c][ay][yil].d += r.d;
+  });
+
+  // Her çiçeğin aktif olduğu aylar ve mevsimsel yüzdesi
+  const cicekMevsim = {};
+  Object.entries(cicekAylik).forEach(([cicek, aylar]) => {
+    cicekMevsim[cicek] = {};
+    // Bu çiçeğin yıllık ortalamaları
+    const cicekYilOrt = {};
+    ALL_DATA.filter(r => r.c === cicek).forEach(r => {
+      const yil = r.t.substring(0, 4);
+      if (!cicekYilOrt[yil]) cicekYilOrt[yil] = { net: 0, d: 0 };
+      cicekYilOrt[yil].net += r.net; cicekYilOrt[yil].d += r.d;
+    });
+    const cicekYilDbn = {};
+    Object.entries(cicekYilOrt).forEach(([y, v]) => { cicekYilDbn[y] = v.d > 0 ? v.net / v.d : 0; });
+
+    for (let m = 1; m <= 12; m++) {
+      const yilVerileri = aylar[m] || {};
+      const yuzdeler = [];
+      Object.entries(yilVerileri).forEach(([yil, v]) => {
+        if (cicekYilDbn[yil] > 0 && v.d > 0) {
+          yuzdeler.push((v.net / v.d) / cicekYilDbn[yil]);
+        }
+      });
+      if (yuzdeler.length > 0) {
+        cicekMevsim[cicek][m] = {
+          ortYuzde: yuzdeler.reduce((s, x) => s + x, 0) / yuzdeler.length,
+          yilSayisi: yuzdeler.length,
+          totalD: Object.values(yilVerileri).reduce((s, v) => s + v.d, 0)
+        };
+      }
+    }
+  });
+
+  // Hafta günü mevsimselliği
+  const gunMevsim = {};
+  ALL_DATA.forEach(r => {
+    const d = new Date(r.t + "T00:00:00");
+    const gun = ["Pazar","Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi"][d.getDay()];
+    if (!gunMevsim[gun]) gunMevsim[gun] = { net: 0, d: 0, mezat: new Set() };
+    gunMevsim[gun].net += r.net; gunMevsim[gun].d += r.d; gunMevsim[gun].mezat.add(r.t);
+  });
+  const gunList = Object.entries(gunMevsim).map(([g, v]) => ({
+    gun: g, dbn: v.d > 0 ? v.net / v.d : 0, d: v.d, mezatSayisi: v.mezat.size
+  })).filter(g => g.d > 0).sort((a, b) => b.dbn - a.dbn);
+
+  // 2026 projeksiyon
+  const yil2026 = ALL_DATA.filter(r => r.t.startsWith("2026"));
+  const ort2026 = yil2026.reduce((s, r) => s + r.d, 0) > 0 ? yil2026.reduce((s, r) => s + r.net, 0) / yil2026.reduce((s, r) => s + r.d, 0) : 0;
+
+  // Özel gün analizi
+  const ozelGunAnaliz = [];
+  OZEL_GUNLER.forEach(og => {
+    const mm = og.tarih.substring(0, 2);
+    const dd = og.tarih.substring(3, 5);
+    let toplamEtki = 0;
+    let etkiSayisi = 0;
+    Object.keys(yilDbn).forEach(yil => {
+      const ozelTarih = yil + "-" + mm + "-" + dd;
+      // Özel günden önceki X gün
+      const baslangic = new Date(ozelTarih + "T00:00:00");
+      baslangic.setDate(baslangic.getDate() - og.oncesi);
+      const basStr = baslangic.toISOString().split("T")[0];
+      const oncesiData = ALL_DATA.filter(r => r.t >= basStr && r.t <= ozelTarih && r.t.startsWith(yil));
+      // O yılın genel ortalaması
+      if (oncesiData.length > 0 && yilDbn[yil] > 0) {
+        const oncesiDbn = oncesiData.reduce((s, r) => s + r.d, 0) > 0 ? oncesiData.reduce((s, r) => s + r.net, 0) / oncesiData.reduce((s, r) => s + r.d, 0) : 0;
+        if (oncesiDbn > 0) {
+          toplamEtki += oncesiDbn / yilDbn[yil];
+          etkiSayisi++;
+        }
+      }
+    });
+    if (etkiSayisi > 0) {
+      ozelGunAnaliz.push({
+        ad: og.ad, tarih: og.tarih, oncesi: og.oncesi,
+        ortEtki: toplamEtki / etkiSayisi,
+        yilSayisi: etkiSayisi
+      });
+    }
+  });
+  // Anneler günü
+  let annelerEtki = 0, annelerSayisi = 0;
+  Object.keys(yilDbn).forEach(yil => {
+    const ag = getAnnelerGunu(parseInt(yil));
+    const baslangic = new Date(ag + "T00:00:00");
+    baslangic.setDate(baslangic.getDate() - 7);
+    const basStr = baslangic.toISOString().split("T")[0];
+    const oncesiData = ALL_DATA.filter(r => r.t >= basStr && r.t <= ag && r.t.startsWith(yil));
+    if (oncesiData.length > 0 && yilDbn[yil] > 0) {
+      const oncesiDbn = oncesiData.reduce((s, r) => s + r.d, 0) > 0 ? oncesiData.reduce((s, r) => s + r.net, 0) / oncesiData.reduce((s, r) => s + r.d, 0) : 0;
+      if (oncesiDbn > 0) { annelerEtki += oncesiDbn / yilDbn[yil]; annelerSayisi++; }
+    }
+  });
+  if (annelerSayisi > 0) {
+    ozelGunAnaliz.push({ ad: "Anneler Günü", tarih: "05-2.Pazar", oncesi: 7, ortEtki: annelerEtki / annelerSayisi, yilSayisi: annelerSayisi });
+  }
+  ozelGunAnaliz.sort((a, b) => b.ortEtki - a.ortEtki);
+
+  return { aylarData, cicekMevsim, gunList, ort2026, yilDbn, ozelGunAnaliz, cicekAylik };
+}
+
 function getAlerts(filtered) {
   const today = state.ed;
   const result = [];
@@ -697,7 +876,7 @@ function render() {
   html += `</div>`;
 
   // Tabs
-  const tabList = [{id:"panel",l:"Panel",i:"◉"},{id:"plan",l:"Planlayıcı",i:"🎯"},{id:"sube",l:"Şube Tablosu",i:"📋"},{id:"compare",l:"Karşılaştır",i:"⚡"},{id:"heat",l:"Kâr Haritası",i:"🔥"},{id:"tablo",l:"Tablo",i:"☰"},{id:"yoy",l:"Geçen Yıl",i:"📊"},{id:"rapor",l:"Rapor",i:"📄"},{id:"ai",l:"AI",i:"✦"}];
+  const tabList = [{id:"panel",l:"Panel",i:"◉"},{id:"plan",l:"Planlayıcı",i:"🎯"},{id:"sube",l:"Şube Tablosu",i:"📋"},{id:"compare",l:"Karşılaştır",i:"⚡"},{id:"heat",l:"Kâr Haritası",i:"🔥"},{id:"tablo",l:"Tablo",i:"☰"},{id:"yoy",l:"Geçen Yıl",i:"📊"},{id:"mevsim",l:"Mevsimsellik",i:"🗓"},{id:"rapor",l:"Rapor",i:"📄"},{id:"ai",l:"AI",i:"✦"}];
   html += `<div class="tabs">`;
   tabList.forEach(t => {
     html += `<button class="tab-btn ${state.tab===t.id?'active':''}" onclick="setState({tab:'${t.id}',ddOpen:null})">${t.i} ${t.l}</button>`;
@@ -1243,6 +1422,172 @@ function render() {
       if (topLoser) html += 'En çok düşen: ' + esc(topLoser.name) + ' (-%' + Math.abs(topLoser.dbnPct).toFixed(0) + ' dm başı).';
       html += `</div></div>`;
     }
+  }
+
+  // ══ MEVSİMSELLİK ══
+  if (state.tab === "mevsim") {
+    const sd = getSeasonalData();
+    const buAy = new Date().getMonth() + 1;
+    const ayAdlari = ["","Ocak","Şubat","Mart","Nisan","Mayıs","Haziran","Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"];
+
+    html += `<div class="sec-title">🗓 Mevsimsellik Analizi</div>`;
+    html += `<div style="font-size:12px;color:#94a3b8;margin-bottom:16px;margin-top:-6px">6 yıllık veri ile enflasyondan bağımsız mevsimsel örüntüler</div>`;
+
+    // ── Aylık Mevsimsel Endeks ──
+    html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:10px">📊 Aylık Mevsimsel Endeks</div>`;
+    html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">100 = yıl ortalaması. 110 = o ay ortalamanın %10 üstünde</div>`;
+    html += `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">`;
+    sd.aylarData.forEach(a => {
+      if (a.ortYuzde === null) {
+        html += `<div style="padding:10px 6px;text-align:center;border-radius:8px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04)"><div style="font-size:10px;color:#475569">${a.ad}</div><div style="font-size:12px;color:#475569;margin-top:2px">—</div></div>`;
+      } else {
+        const idx = Math.round(a.ortYuzde * 100);
+        const isBuAy = a.ay === buAy;
+        let bg, cl;
+        if (idx >= 115) { bg = "rgba(34,197,94,0.2)"; cl = "#4ade80"; }
+        else if (idx >= 105) { bg = "rgba(34,197,94,0.1)"; cl = "#6ee7b7"; }
+        else if (idx >= 95) { bg = "rgba(255,255,255,0.04)"; cl = "#e2e8f0"; }
+        else if (idx >= 85) { bg = "rgba(239,68,68,0.08)"; cl = "#fca5a5"; }
+        else { bg = "rgba(239,68,68,0.15)"; cl = "#f87171"; }
+        const border = isBuAy ? "border:2px solid #fbbf24" : "border:1px solid rgba(255,255,255,0.06)";
+        html += `<div style="padding:10px 6px;text-align:center;border-radius:8px;background:${bg};${border}">`;
+        html += `<div style="font-size:10px;color:#94a3b8">${a.ad}${isBuAy?' 📍':''}</div>`;
+        html += `<div style="font-size:16px;font-weight:800;color:${cl};margin-top:2px">${idx}</div>`;
+        html += `<div style="font-size:8px;color:#475569">${a.yilSayisi} yıl · ${a.demet}dm</div>`;
+        html += `</div>`;
+      }
+    });
+    html += `</div></div>`;
+
+    // ── 2026 Projeksiyon ──
+    if (sd.ort2026 > 0) {
+      html += `<div class="card" style="margin-bottom:14px;background:rgba(168,85,247,0.06);border-color:rgba(168,85,247,0.12)">`;
+      html += `<div style="font-size:13px;font-weight:700;color:#c4b5fd;margin-bottom:10px">🔮 2026 Aylık Fiyat Projeksiyonu</div>`;
+      html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">2026 ort: ${fmt(sd.ort2026)}/dm × mevsimsel endeks</div>`;
+      html += `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">`;
+      sd.aylarData.forEach(a => {
+        if (a.ortYuzde === null) {
+          html += `<div style="padding:8px 6px;text-align:center;border-radius:8px;background:rgba(255,255,255,0.02)"><div style="font-size:10px;color:#475569">${a.ad}</div><div style="font-size:11px;color:#475569">—</div></div>`;
+        } else {
+          const proj = sd.ort2026 * a.ortYuzde;
+          const isBuAy = a.ay === buAy;
+          const isPast = a.ay < buAy;
+          html += `<div style="padding:8px 6px;text-align:center;border-radius:8px;background:${isBuAy?'rgba(250,204,21,0.1)':'rgba(255,255,255,0.03)'};border:1px solid ${isBuAy?'rgba(250,204,21,0.2)':'rgba(255,255,255,0.04)'}">`;
+          html += `<div style="font-size:10px;color:${isPast?'#475569':'#94a3b8'}">${a.ad}</div>`;
+          html += `<div style="font-size:13px;font-weight:700;color:${isBuAy?'#fbbf24':isPast?'#64748b':'#c4b5fd'}">${fmt(proj)}</div>`;
+          html += `</div>`;
+        }
+      });
+      html += `</div></div>`;
+    }
+
+    // ── Haftanın Günleri ──
+    if (sd.gunList.length > 0) {
+      const maxDbn = sd.gunList[0].dbn;
+      html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:10px">📅 Haftanın Günleri Performansı</div>`;
+      html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Tüm yıllar bazında ortalama dm başı net</div>`;
+      sd.gunList.forEach((g, i) => {
+        const w = maxDbn > 0 ? (g.dbn / maxDbn * 100) : 0;
+        html += `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-top:${i>0?'1px solid rgba(255,255,255,0.03)':'none'}">`;
+        html += `<div style="width:75px;font-size:12px;font-weight:${i===0?'700':'500'};color:${i===0?'#4ade80':'#e2e8f0'}">${i===0?'🏆 ':''}${g.gun}</div>`;
+        html += `<div style="flex:1;height:6px;background:rgba(255,255,255,0.04);border-radius:3px"><div style="height:100%;border-radius:3px;width:${w}%;background:${i===0?'linear-gradient(90deg,#22c55e,#34d399)':'rgba(148,163,184,0.3)'}"></div></div>`;
+        html += `<div style="width:60px;text-align:right;font-size:13px;font-weight:700;color:${i===0?'#4ade80':'#cbd5e1'}">${fmt(g.dbn)}</div>`;
+        html += `<div style="width:50px;text-align:right;font-size:9px;color:#64748b">${g.mezatSayisi} gün</div>`;
+        html += `</div>`;
+      });
+      const best = sd.gunList[0], worst = sd.gunList[sd.gunList.length - 1];
+      if (best && worst && best.dbn > worst.dbn) {
+        const diff = ((best.dbn - worst.dbn) / worst.dbn * 100);
+        html += `<div style="margin-top:8px;padding:8px;border-radius:8px;background:rgba(34,197,94,0.06);font-size:11px;color:#6ee7b7">💡 ${best.gun} günü ${worst.gun}'e göre %${diff.toFixed(0)} daha kârlı</div>`;
+      }
+      html += `</div>`;
+    }
+
+    // ── Özel Günler ──
+    if (sd.ozelGunAnaliz.length > 0) {
+      html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:10px">🎉 Özel Günler Fiyat Etkisi</div>`;
+      html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Özel gün öncesi fiyatlar ortalamanın ne kadar üstünde?</div>`;
+      sd.ozelGunAnaliz.forEach(og => {
+        const etki = Math.round(og.ortEtki * 100);
+        const fark = etki - 100;
+        const isPositive = fark > 0;
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.03)">`;
+        html += `<div><div style="font-size:12px;font-weight:600;color:#f8fafc">${og.ad}</div><div style="font-size:9px;color:#64748b">${og.oncesi} gün öncesinden · ${og.yilSayisi} yıl verisi</div></div>`;
+        html += `<div style="text-align:right"><span style="font-size:13px;font-weight:700;color:${isPositive?'#4ade80':'#f87171'}">${isPositive?'+':''}${fark}%</span></div>`;
+        html += `</div>`;
+      });
+      // Yaklaşan özel gün uyarısı
+      const bugun = new Date();
+      const yaklasan = [];
+      OZEL_GUNLER.forEach(og => {
+        const mm = parseInt(og.tarih.substring(0, 2));
+        const dd = parseInt(og.tarih.substring(3, 5));
+        const ozelDate = new Date(bugun.getFullYear(), mm - 1, dd);
+        if (ozelDate < bugun) ozelDate.setFullYear(ozelDate.getFullYear() + 1);
+        const gunFarki = Math.round((ozelDate - bugun) / 864e5);
+        if (gunFarki <= 30) yaklasan.push({ ad: og.ad, gun: gunFarki });
+      });
+      const agDate = new Date(getAnnelerGunu(bugun.getFullYear()) + "T00:00:00");
+      if (agDate >= bugun) {
+        const agFark = Math.round((agDate - bugun) / 864e5);
+        if (agFark <= 30) yaklasan.push({ ad: "Anneler Günü", gun: agFark });
+      }
+      if (yaklasan.length > 0) {
+        html += `<div style="margin-top:10px;padding:10px;border-radius:8px;background:rgba(250,204,21,0.08);border:1px solid rgba(250,204,21,0.15)">`;
+        html += `<div style="font-size:11px;color:#fbbf24;font-weight:600;margin-bottom:4px">⏰ Yaklaşan Özel Günler</div>`;
+        yaklasan.forEach(y => { html += `<div style="font-size:12px;color:#fde68a">${y.ad} — ${y.gun} gün sonra</div>`; });
+        html += `</div>`;
+      }
+      html += `</div>`;
+    }
+
+    // ── Çiçek Mevsim Takvimi ──
+    html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:10px">🌷 Çiçek Mevsim Takvimi</div>`;
+    html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Her çiçeğin hangi aylarda aktif olduğu ve mevsimsel endeksi</div>`;
+    html += `<div style="overflow-x:auto"><div style="min-width:450px">`;
+    html += `<div style="display:grid;grid-template-columns:100px repeat(12,1fr);gap:2px;margin-bottom:2px"><div style="font-size:8px;color:#475569"></div>`;
+    ["O","Ş","M","N","M","H","T","A","E","E","K","A"].forEach((a, i) => {
+      html += `<div style="text-align:center;font-size:8px;color:${i+1===buAy?'#fbbf24':'#475569'};font-weight:${i+1===buAy?'700':'400'}">${a}</div>`;
+    });
+    html += `</div>`;
+    const cicekSirali = Object.entries(sd.cicekMevsim).map(([c, aylar]) => ({ cicek: c, aylar, totalD: Object.values(aylar).reduce((s, a) => s + a.totalD, 0) })).sort((a, b) => b.totalD - a.totalD).slice(0, state.expanded.mevsimCicek ? 999 : 10);
+    cicekSirali.forEach(item => {
+      html += `<div style="display:grid;grid-template-columns:100px repeat(12,1fr);gap:2px;margin-bottom:2px"><div style="font-size:9px;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:4px 0">${esc(item.cicek)}</div>`;
+      for (let m = 1; m <= 12; m++) {
+        const data = item.aylar[m];
+        if (!data) { html += `<div style="height:22px;border-radius:3px;background:rgba(255,255,255,0.01)"></div>`; }
+        else {
+          const idx = Math.round(data.ortYuzde * 100);
+          let bg;
+          if (idx >= 120) bg = "rgba(34,197,94,0.5)";
+          else if (idx >= 110) bg = "rgba(34,197,94,0.3)";
+          else if (idx >= 100) bg = "rgba(34,197,94,0.15)";
+          else if (idx >= 90) bg = "rgba(250,204,21,0.15)";
+          else bg = "rgba(239,68,68,0.15)";
+          html += `<div style="height:22px;border-radius:3px;background:${bg};display:flex;align-items:center;justify-content:center;font-size:7px;color:#e2e8f0;font-weight:600">${idx}</div>`;
+        }
+      }
+      html += `</div>`;
+    });
+    html += `</div></div>`;
+    const totalCicek = Object.keys(sd.cicekMevsim).length;
+    if (totalCicek > 10) html += `<button class="show-more" onclick="toggleExp('mevsimCicek')">${state.expanded.mevsimCicek?'Daha az ▲':'Tüm çiçekler ('+totalCicek+') ▼'}</button>`;
+    html += `</div>`;
+
+    // ── Bu Ay Durumun ──
+    const buAyData = sd.aylarData[buAy - 1];
+    if (buAyData && buAyData.ortYuzde !== null && sd.ort2026 > 0) {
+      const buAyFiltre = ALL_DATA.filter(r => r.t.startsWith("2026-" + String(buAy).padStart(2, "0")));
+      const buAyD = buAyFiltre.reduce((s, r) => s + r.d, 0);
+      const buAyDbn = buAyD > 0 ? buAyFiltre.reduce((s, r) => s + r.net, 0) / buAyD : 0;
+      const beklenen = sd.ort2026 * buAyData.ortYuzde;
+      const fark = beklenen > 0 ? ((buAyDbn - beklenen) / beklenen * 100) : 0;
+      html += `<div class="card" style="margin-bottom:14px;background:${fark>=0?'rgba(34,197,94,0.06)':'rgba(239,68,68,0.06)'};border-color:${fark>=0?'rgba(34,197,94,0.12)':'rgba(239,68,68,0.12)'}">`;
+      html += `<div style="font-size:13px;font-weight:700;color:${fark>=0?'#4ade80':'#f87171'};margin-bottom:8px">📍 ${ayAdlari[buAy]} 2026 — ${fark>=0?'Beklentinin Üstünde':'Beklentinin Altında'}</div>`;
+      html += `<div style="display:flex;gap:16px;font-size:12px"><div><div style="font-size:9px;color:#64748b">Beklenen</div><div style="font-size:16px;font-weight:800;color:#94a3b8">${fmt(beklenen)}</div></div><div><div style="font-size:9px;color:#64748b">Gerçekleşen</div><div style="font-size:16px;font-weight:800;color:#f8fafc">${buAyDbn > 0 ? fmt(buAyDbn) : '—'}</div></div><div><div style="font-size:9px;color:#64748b">Fark</div><div style="font-size:16px;font-weight:800;color:${fark>=0?'#4ade80':'#f87171'}">${fark>=0?'+':''}${fark.toFixed(1)}%</div></div></div></div>`;
+    }
+
+    html += `<div style="padding:10px;border-radius:8px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);font-size:10px;color:#475569;line-height:1.5"><strong style="color:#64748b">Nasıl çalışır?</strong><br>Her ayın fiyatı o yılın kendi ortalamasına bölünerek mevsimsel endeks hesaplanır. Bu sayede enflasyondan bağımsız, gerçek mevsimsel örüntüler ortaya çıkar. 100 = yıl ortalaması, 120 = ortalamanın %20 üstü.</div>`;
   }
 
   // ══ RAPOR ══
