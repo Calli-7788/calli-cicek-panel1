@@ -1323,8 +1323,22 @@ function render() {
       html += `<div class="sec-title" style="margin-top:24px">📊 Kayıtlı Planlar ve Sonuçlar</div>`;
       savedPlans.slice().reverse().slice(0, state.expanded.allPlans ? 999 : 3).forEach(function(plan, idx) {
         var realIdx = savedPlans.length - 1 - idx;
-        // Check if we have actual data for that date
-        var actualData = ALL_DATA.filter(function(r){ return r.t === plan.date });
+        // Plan tarihinden sonraki 1-3 gün içindeki en yakın mezat gününü ara
+        // (Bugün plan yapılır → yarın/öbür gün mezatta satılır)
+        var actualData = [];
+        var actualDate = null;
+        for (var dayOffset = 1; dayOffset <= 3; dayOffset++) {
+          var checkDate = new Date(plan.date + "T00:00:00");
+          checkDate.setDate(checkDate.getDate() + dayOffset);
+          var checkStr = checkDate.toISOString().split("T")[0];
+          var dayData = ALL_DATA.filter(function(r){ return r.t === checkStr });
+          if (dayData.length > 0) { actualData = dayData; actualDate = checkStr; break; }
+        }
+        // Aynı gün verisi de kontrol et (belki aynı gün satıldı)
+        if (actualData.length === 0) {
+          actualData = ALL_DATA.filter(function(r){ return r.t === plan.date });
+          if (actualData.length > 0) actualDate = plan.date;
+        }
         var hasActual = actualData.length > 0;
 
         html += `<div class="card" style="margin-bottom:8px;padding:12px 14px">`;
@@ -1353,7 +1367,7 @@ function render() {
             var diff = actualNet - plan.estimatedNet;
             var diffPct = plan.estimatedNet > 0 ? (diff / plan.estimatedNet * 100) : 0;
 
-            html += `<div><div style="font-size:9px;color:#64748b">Gerçekleşen</div><div style="font-size:14px;font-weight:700;color:#4ade80">${fmt(actualNet)}</div><div style="font-size:9px;color:#475569">planlanan çiçekler</div></div>`;
+            html += `<div><div style="font-size:9px;color:#64748b">Gerçekleşen${actualDate && actualDate !== plan.date ? ' ('+fD(actualDate)+')' : ''}</div><div style="font-size:14px;font-weight:700;color:#4ade80">${fmt(actualNet)}</div><div style="font-size:9px;color:#475569">planlanan çiçekler</div></div>`;
             html += `<div><div style="font-size:9px;color:#64748b">Fark</div><div style="font-size:14px;font-weight:700;color:${diff>=0?'#34d399':'#f87171'}">${diff>=0?'+':''}${fmt(diff)} (${diffPct>=0?'+':''}${diffPct.toFixed(0)}%)</div></div>`;
             html += `</div>`;
             if (dayTotalNet > actualNet) {
