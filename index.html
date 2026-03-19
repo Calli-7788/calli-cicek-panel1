@@ -1745,7 +1745,7 @@ function render() {
     html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:6px">🌷 Çiçek Mevsim Takvimi</div>`;
     html += `<div style="font-size:10px;color:#64748b;margin-bottom:8px">Her çiçeğin hangi aylarda aktif olduğu ve mevsimsel endeksi</div>`;
     // Arama kutusu
-    html += `<input id="mevsimSearch" type="text" placeholder="Çiçek ara... (ör: frezya, lisyantus)" value="${state.mevsimSearch||''}" oninput="state.mevsimSearch=this.value;render()" style="width:100%;padding:8px 12px;border-radius:8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);color:#e5e7eb;font-size:11px;margin-bottom:8px;outline:none">`;
+    html += `<input id="mevsimSearch" type="text" placeholder="Çiçek ara... (ör: frezya, lisyantus)" value="${state.mevsimSearch||''}" oninput="state.mevsimSearch=this.value;clearTimeout(window._msTmr);window._msTmr=setTimeout(function(){window._msScroll=window.scrollY;var el=document.getElementById('mevsimSearch');var pos=el?el.selectionStart:0;render();setTimeout(function(){var el2=document.getElementById('mevsimSearch');if(el2){el2.focus();el2.setSelectionRange(pos,pos)}},0)},200)" style="width:100%;padding:8px 12px;border-radius:8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);color:#e5e7eb;font-size:11px;margin-bottom:8px;outline:none">`;
     // Filtre butonları
     html += `<div style="display:flex;gap:5px;margin-bottom:10px;flex-wrap:wrap">`;
     html += `<button class="preset-btn ${!state.mevsimFilter||state.mevsimFilter==='aktif'?'active':''}" onclick="setState({mevsimFilter:'aktif'})" style="font-size:10px;padding:4px 8px">Son 3 ay aktif</button>`;
@@ -1800,36 +1800,23 @@ function render() {
         const haftalik = sd.getHaftalikEndeks(item.cicek, detAy);
         const ayAdi = ayAdlari[detAy] || "";
         if (haftalik.length > 0) {
-          html += `<div style="grid-column:1/-1;padding:8px 10px;margin:-1px 0 4px;border-radius:8px;background:rgba(250,204,21,0.06);border:1px solid rgba(250,204,21,0.12)">`;
-          html += `<div style="font-size:10px;font-weight:600;color:#fbbf24;margin-bottom:6px">${esc(item.cicek)} — ${ayAdi} Haftalık Detay</div>`;
-          html += `<div style="display:flex;gap:6px;align-items:flex-end">`;
           const maxIdx = Math.max(...haftalik.map(h => h.endeks));
           const minIdx = Math.min(...haftalik.map(h => h.endeks));
+          html += `<div style="grid-column:1/-1;padding:6px 8px;margin:0 0 3px;border-radius:6px;background:rgba(250,204,21,0.05);border:1px solid rgba(250,204,21,0.1)">`;
+          html += `<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">`;
+          html += `<span style="font-size:9px;color:#fbbf24;font-weight:600;margin-right:2px">${ayAdi}:</span>`;
           haftalik.forEach(h => {
-            const barH = maxIdx > 0 ? Math.max(8, (h.endeks / maxIdx) * 50) : 8;
             const isBest = h.endeks === maxIdx && haftalik.length > 1;
             const isWorst = h.endeks === minIdx && haftalik.length > 1 && maxIdx !== minIdx;
-            let barBg;
-            if (h.endeks >= 115) barBg = "#4ade80";
-            else if (h.endeks >= 105) barBg = "#6ee7b7";
-            else if (h.endeks >= 95) barBg = "#94a3b8";
-            else if (h.endeks >= 85) barBg = "#fbbf24";
-            else barBg = "#f87171";
-            html += `<div style="flex:1;text-align:center">`;
-            html += `<div style="font-size:10px;font-weight:700;color:${isBest?'#4ade80':isWorst?'#f87171':'#e2e8f0'};margin-bottom:2px">${h.endeks}</div>`;
-            html += `<div style="height:${barH}px;border-radius:3px;background:${barBg};margin-bottom:3px;${isBest?'outline:2px solid #4ade80;outline-offset:1px':''}"></div>`;
-            html += `<div style="font-size:8px;color:#94a3b8">H${h.hafta}</div>`;
-            html += `<div style="font-size:7px;color:#475569">${h.demet}dm</div>`;
-            html += `<div style="font-size:7px;color:#475569">${h.yilSayisi}yıl</div>`;
-            html += `</div>`;
+            const cl = isBest ? "#4ade80" : isWorst ? "#f87171" : "#cbd5e1";
+            const bg = isBest ? "rgba(34,197,94,0.15)" : isWorst ? "rgba(239,68,68,0.1)" : "rgba(255,255,255,0.04)";
+            html += `<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:${bg};color:${cl};font-weight:${isBest||isWorst?'700':'500'}">H${h.hafta}:${h.endeks}</span>`;
           });
-          html += `</div>`;
           if (maxIdx > minIdx) {
-            const bestH = haftalik.find(h => h.endeks === maxIdx);
-            const worstH = haftalik.find(h => h.endeks === minIdx);
-            html += `<div style="margin-top:6px;font-size:10px;color:#94a3b8">💡 En iyi: <span style="color:#4ade80;font-weight:600">Hafta ${bestH.hafta} (${bestH.endeks})</span> · En düşük: <span style="color:#f87171">Hafta ${worstH.hafta} (${worstH.endeks})</span></div>`;
+            const diff = maxIdx - minIdx;
+            html += `<span style="font-size:8px;color:#64748b;margin-left:4px">fark:${diff}</span>`;
           }
-          html += `</div>`;
+          html += `</div></div>`;
         }
       }
     });
@@ -2190,6 +2177,11 @@ function render() {
     // Scroll chat to bottom
     const chat = document.getElementById("aiChat");
     if (chat) chat.scrollTop = chat.scrollHeight;
+  }
+  // Restore mevsim search scroll position
+  if (state.tab === "mevsim" && window._msScroll) {
+    window.scrollTo(0, window._msScroll);
+    window._msScroll = null;
   }
 }
 
