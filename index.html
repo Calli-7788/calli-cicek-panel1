@@ -621,6 +621,150 @@ function getSeasonalData() {
   return { aylarData, cicekMevsim, gunList, ort2026, yilDbn, ozelGunAnaliz, cicekAylik };
 }
 
+// ═══════════════ FİYAT TAHMİNİ ═══════════════
+function getForecast() {
+  const bugun = new Date();
+  const buYil = bugun.getFullYear();
+  const buAy = bugun.getMonth() + 1;
+  const buHafta = getWeekNumber(bugun);
+
+  // 2026 verisi
+  const data2026 = ALL_DATA.filter(r => r.t.startsWith(String(buYil)));
+  const ort2026 = data2026.reduce((s,r) => s+r.d, 0) > 0 ? data2026.reduce((s,r) => s+r.net, 0) / data2026.reduce((s,r) => s+r.d, 0) : 0;
+
+  // Son 2 hafta trendi (son 14 günün verisi)
+  const son14 = new Date(bugun); son14.setDate(son14.getDate() - 14);
+  const son14str = son14.toISOString().split("T")[0];
+  const recentData = ALL_DATA.filter(r => r.t >= son14str && r.t.startsWith(String(buYil)));
+
+  // Son 2 hafta: 1. yarı vs 2. yarı trend
+  const son7str = new Date(bugun); son7str.setDate(son7str.getDate() - 7);
+  const hafta1 = recentData.filter(r => r.t < son7str.toISOString().split("T")[0]);
+  const hafta2 = recentData.filter(r => r.t >= son7str.toISOString().split("T")[0]);
+  const h1Dbn = hafta1.reduce((s,r) => s+r.d, 0) > 0 ? hafta1.reduce((s,r) => s+r.net, 0) / hafta1.reduce((s,r) => s+r.d, 0) : 0;
+  const h2Dbn = hafta2.reduce((s,r) => s+r.d, 0) > 0 ? hafta2.reduce((s,r) => s+r.net, 0) / hafta2.reduce((s,r) => s+r.d, 0) : 0;
+  const trendPct = h1Dbn > 0 ? ((h2Dbn - h1Dbn) / h1Dbn * 100) : 0;
+
+  // Önümüzdeki haftanın numarası
+  const gelecekHafta = new Date(bugun);
+  gelecekHafta.setDate(gelecekHafta.getDate() + 7);
+  const ghAy = gelecekHafta.getMonth() + 1;
+  const ghHafta = getWeekNumber(gelecekHafta);
+
+  // Geçmiş yılların aynı haftasının mevsimsel endeksi
+  const yillar = [...new Set(ALL_DATA.map(r => r.t.substring(0,4)))].filter(y => y !== String(buYil));
+  
+  // Genel tahmin: Tüm çiçekler
+  const genelTahmin = calcWeekForecast(null, ghAy, ghHafta, yillar, ort2026, h2Dbn, trendPct);
+
+  // Çiçek bazlı tahmin
+  const cicekTahminleri = [];
+  const aktifCicekler = [...new Set(recentData.map(r => r.c))];
+  aktifCicekler.forEach(cicek => {
+    const cicek2026 = data2026.filter(r => r.c === cicek);
+    const cicekOrt = cicek2026.reduce((s,r) => s+r.d, 0) > 0 ? cicek2026.reduce((s,r) => s+r.net, 0) / cicek2026.reduce((s,r) => s+r.d, 0) : 0;
+    
+    // Bu çiçeğin son 2 hafta trendi
+    const cRecent1 = hafta1.filter(r => r.c === cicek);
+    const cRecent2 = hafta2.filter(r => r.c === cicek);
+    const cH1 = cRecent1.reduce((s,r) => s+r.d, 0) > 0 ? cRecent1.reduce((s,r) => s+r.net, 0) / cRecent1.reduce((s,r) => s+r.d, 0) : 0;
+    const cH2 = cRecent2.reduce((s,r) => s+r.d, 0) > 0 ? cRecent2.reduce((s,r) => s+r.net, 0) / cRecent2.reduce((s,r) => s+r.d, 0) : 0;
+    const cTrend = cH1 > 0 ? ((cH2 - cH1) / cH1 * 100) : 0;
+
+    const tahmin = calcWeekForecast(cicek, ghAy, ghHafta, yillar, cicekOrt, cH2, cTrend);
+    if (tahmin.merkez > 0) {
+      cicekTahminleri.push({ cicek, ...tahmin, sonFiyat: cH2, trend: cTrend });
+    }
+  });
+  cicekTahminleri.sort((a, b) => b.merkez - a.merkez);
+
+  // Şube bazlı tahmin (en aktif 5 şube)
+  const subeTahminleri = [];
+  const aktifSubeler = [...new Set(recentData.map(r => r.s))];
+  aktifSubeler.forEach(sube => {
+    const sube2026 = data2026.filter(r => r.s === sube);
+    const subeOrt = sube2026.reduce((s,r) => s+r.d, 0) > 0 ? sube2026.reduce((s,r) => s+r.net, 0) / sube2026.reduce((s,r) => s+r.d, 0) : 0;
+    const sRecent2 = hafta2.filter(r => r.s === sube);
+    const sH2 = sRecent2.reduce((s,r) => s+r.d, 0) > 0 ? sRecent2.reduce((s,r) => s+r.net, 0) / sRecent2.reduce((s,r) => s+r.d, 0) : 0;
+    const sTrend = subeOrt > 0 ? ((sH2 - subeOrt) / subeOrt * 100) : 0;
+    const tahmin = calcWeekForecast(null, ghAy, ghHafta, yillar, subeOrt, sH2, sTrend);
+    if (tahmin.merkez > 0) subeTahminleri.push({ sube, ...tahmin, sonFiyat: sH2 });
+  });
+  subeTahminleri.sort((a, b) => b.merkez - a.merkez);
+
+  return { genelTahmin, cicekTahminleri, subeTahminleri, h2Dbn, trendPct, ghAy, ghHafta, ort2026 };
+}
+
+function getWeekNumber(d) {
+  const date = new Date(d.getTime());
+  date.setHours(0,0,0,0);
+  date.setDate(date.getDate() + 3 - (date.getDay() + 6) % 7);
+  const week1 = new Date(date.getFullYear(), 0, 4);
+  return 1 + Math.round(((date.getTime() - week1.getTime()) / 864e5 - 3 + (week1.getDay() + 6) % 7) / 7);
+}
+
+function calcWeekForecast(cicek, targetAy, targetHafta, yillar, currentYearAvg, lastWeekDbn, trendPct) {
+  // Geçmiş yılların aynı haftasındaki mevsimsel yüzdeleri bul
+  const mevsimselYuzdeler = [];
+
+  yillar.forEach(yil => {
+    // O yılın genel (veya çiçek) ortalaması
+    let yilData = ALL_DATA.filter(r => r.t.startsWith(yil));
+    if (cicek) yilData = yilData.filter(r => r.c === cicek);
+    const yilDbn = yilData.reduce((s,r) => s+r.d, 0) > 0 ? yilData.reduce((s,r) => s+r.net, 0) / yilData.reduce((s,r) => s+r.d, 0) : 0;
+    if (yilDbn <= 0) return;
+
+    // O yılın aynı haftasının verisi (hafta numarasına göre)
+    let haftaData = yilData.filter(r => {
+      const d = new Date(r.t + "T00:00:00");
+      return getWeekNumber(d) === targetHafta;
+    });
+    if (haftaData.length === 0) {
+      // Hafta bulunamazsa, aynı ayın tüm verisini al
+      haftaData = yilData.filter(r => parseInt(r.t.substring(5,7)) === targetAy);
+    }
+    if (haftaData.length === 0) return;
+
+    const haftaDbn = haftaData.reduce((s,r) => s+r.d, 0) > 0 ? haftaData.reduce((s,r) => s+r.net, 0) / haftaData.reduce((s,r) => s+r.d, 0) : 0;
+    if (haftaDbn > 0) mevsimselYuzdeler.push(haftaDbn / yilDbn);
+  });
+
+  if (mevsimselYuzdeler.length === 0 || currentYearAvg <= 0) {
+    // Mevsimsel veri yoksa sadece trend bazlı tahmin
+    if (lastWeekDbn > 0) {
+      const trendFactor = 1 + (trendPct / 100) * 0.5; // Trendin yarısı kadar etki
+      const merkez = lastWeekDbn * trendFactor;
+      return { merkez, alt: merkez * 0.9, ust: merkez * 1.1, guven: "düşük", yilSayisi: 0 };
+    }
+    return { merkez: 0, alt: 0, ust: 0, guven: "yok", yilSayisi: 0 };
+  }
+
+  const ortMevsimsel = mevsimselYuzdeler.reduce((s,x) => s+x, 0) / mevsimselYuzdeler.length;
+  const minMevsimsel = Math.min(...mevsimselYuzdeler);
+  const maxMevsimsel = Math.max(...mevsimselYuzdeler);
+
+  // Mevsimsel tahmin: 2026 ortalaması × mevsimsel yüzde
+  const mevsimselTahmin = currentYearAvg * ortMevsimsel;
+
+  // Trend tahmin: Son hafta fiyatı × trend faktörü
+  const trendFactor = 1 + (trendPct / 100) * 0.3;
+  const trendTahmin = lastWeekDbn > 0 ? lastWeekDbn * trendFactor : mevsimselTahmin;
+
+  // Ağırlıklı ortalama: %50 mevsimsel + %30 son hafta + %20 trend
+  const merkez = mevsimselTahmin * 0.5 + (lastWeekDbn > 0 ? lastWeekDbn : mevsimselTahmin) * 0.3 + trendTahmin * 0.2;
+
+  // Güven aralığı
+  const alt = currentYearAvg * minMevsimsel * 0.95;
+  const ust = currentYearAvg * maxMevsimsel * 1.05;
+
+  // Güven seviyesi
+  let guven = "orta";
+  if (mevsimselYuzdeler.length >= 4 && (maxMevsimsel - minMevsimsel) < 0.3) guven = "yüksek";
+  else if (mevsimselYuzdeler.length <= 1 || (maxMevsimsel - minMevsimsel) > 0.5) guven = "düşük";
+
+  return { merkez, alt, ust, guven, yilSayisi: mevsimselYuzdeler.length };
+}
+
 function getAlerts(filtered) {
   const today = state.ed;
   const result = [];
@@ -1588,6 +1732,90 @@ function render() {
     }
 
     html += `<div style="padding:10px;border-radius:8px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);font-size:10px;color:#475569;line-height:1.5"><strong style="color:#64748b">Nasıl çalışır?</strong><br>Her ayın fiyatı o yılın kendi ortalamasına bölünerek mevsimsel endeks hesaplanır. Bu sayede enflasyondan bağımsız, gerçek mevsimsel örüntüler ortaya çıkar. 100 = yıl ortalaması, 120 = ortalamanın %20 üstü.</div>`;
+
+    // ══════════════ FİYAT TAHMİNİ BÖLÜMÜ ══════════════
+    const fc = getForecast();
+    if (fc.genelTahmin.merkez > 0) {
+      html += `<div class="sec-title" style="margin-top:24px">🔮 Önümüzdeki Hafta Fiyat Tahmini</div>`;
+      html += `<div style="font-size:12px;color:#94a3b8;margin-bottom:14px;margin-top:-6px">Geçmiş ${fc.genelTahmin.yilSayisi} yılın aynı haftası + son 2 hafta trendi ile hesaplandı</div>`;
+
+      // Genel tahmin kartı
+      const guvenRenk = fc.genelTahmin.guven === "yüksek" ? "#4ade80" : fc.genelTahmin.guven === "orta" ? "#fbbf24" : "#f87171";
+      const guvenBg = fc.genelTahmin.guven === "yüksek" ? "rgba(34,197,94,0.08)" : fc.genelTahmin.guven === "orta" ? "rgba(250,204,21,0.08)" : "rgba(239,68,68,0.08)";
+      const guvenBorder = fc.genelTahmin.guven === "yüksek" ? "rgba(34,197,94,0.15)" : fc.genelTahmin.guven === "orta" ? "rgba(250,204,21,0.15)" : "rgba(239,68,68,0.15)";
+      const trendIcon = fc.trendPct > 3 ? "📈" : fc.trendPct < -3 ? "📉" : "➡️";
+      const trendText = fc.trendPct > 3 ? "Yükselişte" : fc.trendPct < -3 ? "Düşüşte" : "Stabil";
+
+      html += `<div class="card" style="margin-bottom:14px;background:rgba(168,85,247,0.06);border-color:rgba(168,85,247,0.12);padding:18px">`;
+      html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-size:14px;font-weight:700;color:#c4b5fd">Genel Fiyat Tahmini</div><div style="font-size:10px;padding:3px 8px;border-radius:6px;background:${guvenBg};border:1px solid ${guvenBorder};color:${guvenRenk}">Güven: ${fc.genelTahmin.guven}</div></div>`;
+
+      // Merkez fiyat - büyük
+      html += `<div style="text-align:center;margin-bottom:14px">`;
+      html += `<div style="font-size:10px;color:#64748b">Tahmini Dm Başı Net</div>`;
+      html += `<div style="font-size:32px;font-weight:800;color:#c4b5fd;margin:4px 0">${fmt(fc.genelTahmin.merkez)}</div>`;
+      html += `<div style="font-size:12px;color:#64748b">Bant: ${fmt(fc.genelTahmin.alt)} — ${fmt(fc.genelTahmin.ust)}</div>`;
+      html += `</div>`;
+
+      // Bant görseli
+      const bandMin = fc.genelTahmin.alt;
+      const bandMax = fc.genelTahmin.ust;
+      const bandRange = bandMax - bandMin || 1;
+      const merkezPos = ((fc.genelTahmin.merkez - bandMin) / bandRange * 100);
+      const sonPos = fc.h2Dbn > 0 ? Math.max(0, Math.min(100, ((fc.h2Dbn - bandMin) / bandRange * 100))) : -1;
+      html += `<div style="margin-bottom:14px"><div style="position:relative;height:24px;background:linear-gradient(90deg,rgba(239,68,68,0.2),rgba(250,204,21,0.2),rgba(34,197,94,0.2));border-radius:12px;overflow:visible">`;
+      html += `<div style="position:absolute;left:${merkezPos}%;top:-2px;transform:translateX(-50%);width:4px;height:28px;background:#c4b5fd;border-radius:2px" title="Tahmin: ${fmt(fc.genelTahmin.merkez)}"></div>`;
+      if (sonPos >= 0) html += `<div style="position:absolute;left:${sonPos}%;top:4px;transform:translateX(-50%);width:16px;height:16px;background:#f8fafc;border-radius:50%;border:2px solid #475569;display:flex;align-items:center;justify-content:center;font-size:7px;color:#0b0e18;font-weight:800" title="Şu an: ${fmt(fc.h2Dbn)}">⬤</div>`;
+      html += `</div>`;
+      html += `<div style="display:flex;justify-content:space-between;margin-top:4px;font-size:9px"><span style="color:#f87171">${fmt(bandMin)}</span><span style="color:#64748b">⬤ Şu an: ${fmt(fc.h2Dbn)}</span><span style="color:#4ade80">${fmt(bandMax)}</span></div>`;
+      html += `</div>`;
+
+      // Trend bilgisi
+      html += `<div style="display:flex;gap:12px;padding:10px;border-radius:8px;background:rgba(255,255,255,0.03)">`;
+      html += `<div style="flex:1;text-align:center"><div style="font-size:9px;color:#64748b">Son Hafta</div><div style="font-size:14px;font-weight:700;color:#f8fafc">${fmt(fc.h2Dbn)}</div></div>`;
+      html += `<div style="flex:1;text-align:center"><div style="font-size:9px;color:#64748b">Trend</div><div style="font-size:14px;font-weight:700;color:${fc.trendPct>0?'#4ade80':'#f87171'}">${trendIcon} ${fc.trendPct>0?'+':''}${fc.trendPct.toFixed(1)}%</div></div>`;
+      html += `<div style="flex:1;text-align:center"><div style="font-size:9px;color:#64748b">Mevsimsel</div><div style="font-size:14px;font-weight:700;color:#c4b5fd">${fc.genelTahmin.yilSayisi} yıl</div></div>`;
+      html += `</div></div>`;
+
+      // Çiçek bazlı tahminler
+      if (fc.cicekTahminleri.length > 0) {
+        html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:10px">🌷 Çiçek Bazlı Tahmin</div>`;
+        html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Önümüzdeki hafta tahmini dm başı net fiyat</div>`;
+
+        const tahminShow = state.expanded.tahminCicek ? 999 : 8;
+        fc.cicekTahminleri.slice(0, tahminShow).forEach((ct, i) => {
+          const trendCl = ct.trend > 3 ? "#4ade80" : ct.trend < -3 ? "#f87171" : "#94a3b8";
+          const trendIcn = ct.trend > 3 ? "▲" : ct.trend < -3 ? "▼" : "→";
+          const guvenCl = ct.guven === "yüksek" ? "#4ade80" : ct.guven === "orta" ? "#fbbf24" : "#f87171";
+          html += `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:${i>0?'1px solid rgba(255,255,255,0.03)':'none'}">`;
+          html += `<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(ct.cicek)}</div><div style="font-size:9px;color:#64748b">Şu an: ${ct.sonFiyat > 0 ? fmt(ct.sonFiyat) : '—'} <span style="color:${trendCl}">${trendIcn} ${ct.trend > 0 ? '+' : ''}${ct.trend.toFixed(0)}%</span></div></div>`;
+          html += `<div style="text-align:right"><div style="font-size:14px;font-weight:700;color:#c4b5fd">${fmt(ct.merkez)}</div><div style="font-size:8px;color:#475569">${fmt(ct.alt)}–${fmt(ct.ust)}</div></div>`;
+          html += `<div style="width:6px;height:6px;border-radius:50%;background:${guvenCl}" title="Güven: ${ct.guven}"></div>`;
+          html += `</div>`;
+        });
+        if (fc.cicekTahminleri.length > 8) html += `<button class="show-more" onclick="toggleExp('tahminCicek')">${state.expanded.tahminCicek?'Daha az ▲':'Tümü ('+fc.cicekTahminleri.length+') ▼'}</button>`;
+        html += `</div>`;
+      }
+
+      // Şube bazlı tahminler
+      if (fc.subeTahminleri.length > 0) {
+        html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:10px">📍 Şube Bazlı Tahmin</div>`;
+        fc.subeTahminleri.forEach((st, i) => {
+          const guvenCl = st.guven === "yüksek" ? "#4ade80" : st.guven === "orta" ? "#fbbf24" : "#f87171";
+          html += `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:${i>0?'1px solid rgba(255,255,255,0.03)':'none'}">`;
+          html += `<div style="flex:1"><div style="font-size:12px;font-weight:600;color:#e2e8f0">${esc(st.sube)}</div><div style="font-size:9px;color:#64748b">Şu an: ${st.sonFiyat > 0 ? fmt(st.sonFiyat) : '—'}</div></div>`;
+          html += `<div style="text-align:right"><div style="font-size:14px;font-weight:700;color:#c4b5fd">${fmt(st.merkez)}</div><div style="font-size:8px;color:#475569">${fmt(st.alt)}–${fmt(st.ust)}</div></div>`;
+          html += `<div style="width:6px;height:6px;border-radius:50%;background:${guvenCl}"></div>`;
+          html += `</div>`;
+        });
+        html += `</div>`;
+      }
+
+      // Tahmin açıklama
+      html += `<div style="padding:10px;border-radius:8px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);font-size:10px;color:#475569;line-height:1.5">`;
+      html += `<strong style="color:#64748b">Tahmin nasıl hesaplanır?</strong><br>`;
+      html += `%50 mevsimsel (geçmiş yılların aynı haftası) + %30 son hafta fiyatı + %20 trend yönü. Güven: 🟢yüksek (4+ yıl, dar bant), 🟡orta, 🔴düşük (az veri veya geniş bant). Bu bir tahmindir, kesin değildir.`;
+      html += `</div>`;
+    }
   }
 
   // ══ RAPOR ══
