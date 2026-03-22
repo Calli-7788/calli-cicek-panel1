@@ -587,17 +587,85 @@ function getSeasonalData() {
     }
   });
 
-  // Hafta günü mevsimselliği
-  const gunMevsim = {};
+  // Hafta günü mevsimselliği — ENFLASYONSuZ (her haftayı kendi içinde normalize et)
+  const mezatGunleri = ["Pazartesi", "Çarşamba", "Cuma"];
+  // Her ISO hafta için günlük endeks hesapla
+  const haftaGunVeri = {}; // { "2024-W12": { "Pazartesi": {net,d}, "Çarşamba": {net,d}, haftaOrt: X } }
   ALL_DATA.forEach(r => {
     const d = new Date(r.t + "T00:00:00");
-    const gun = ["Pazar","Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi"][d.getDay()];
-    if (!gunMevsim[gun]) gunMevsim[gun] = { net: 0, d: 0, mezat: new Set() };
-    gunMevsim[gun].net += r.net; gunMevsim[gun].d += r.d; gunMevsim[gun].mezat.add(r.t);
+    const gunAdi = ["Pazar","Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi"][d.getDay()];
+    if (!mezatGunleri.includes(gunAdi)) return;
+    const yil = r.t.substring(0, 4);
+    const hafta = yil + "-W" + String(getWeekNumber(d)).padStart(2, "0");
+    if (!haftaGunVeri[hafta]) haftaGunVeri[hafta] = {};
+    if (!haftaGunVeri[hafta][gunAdi]) haftaGunVeri[hafta][gunAdi] = { net: 0, d: 0 };
+    haftaGunVeri[hafta][gunAdi].net += r.net; haftaGunVeri[hafta][gunAdi].d += r.d;
   });
-  const gunList = Object.entries(gunMevsim).map(([g, v]) => ({
-    gun: g, dbn: v.d > 0 ? v.net / v.d : 0, d: v.d, mezatSayisi: v.mezat.size
-  })).filter(g => g.d > 0).sort((a, b) => b.dbn - a.dbn);
+  // Her haftanın ortalamasını hesapla, sonra her günü o ortalamaya böl
+  const gunEndeksler = {}; // { "Pazartesi": [1.05, 0.98, 1.02, ...], "Çarşamba": [...] }
+  const gunToplamNet = {}; // { "Pazartesi": totalNet }
+  mezatGunleri.forEach(g => { gunEndeksler[g] = []; gunToplamNet[g] = 0; });
+  Object.values(haftaGunVeri).forEach(hafta => {
+    // Haftadaki tüm günlerin birleşik ortalaması
+    let hNet = 0, hD = 0;
+    Object.values(hafta).forEach(v => { hNet += v.net; hD += v.d; });
+    const haftaOrt = hD > 0 ? hNet / hD : 0;
+    if (haftaOrt <= 0) return;
+    // Her günü hafta ortalamasına böl
+    mezatGunleri.forEach(g => {
+      if (hafta[g] && hafta[g].d > 0) {
+        const gunDbn = hafta[g].net / hafta[g].d;
+        gunEndeksler[g].push(gunDbn / haftaOrt);
+        gunToplamNet[g] += hafta[g].net;
+      }
+    });
+  });
+  const gunList = mezatGunleri.map(g => {
+    const vals = gunEndeksler[g];
+    if (vals.length === 0) return null;
+    const ort = vals.reduce((s, x) => s + x, 0) / vals.length;
+    return { gun: g, endeks: Math.round(ort * 100), mezatSayisi: vals.length, toplamNet: gunToplamNet[g] };
+  }).filter(g => g !== null).sort((a, b) => b.endeks - a.endeks);
+
+  // Çiçek bazlı gün performansı (en çok satılan 8 çiçek)
+  const cicekGunVeri = {};
+  ALL_DATA.forEach(r => {
+    if (r.c.toLowerCase().includes("saksı") || r.c.toLowerCase().includes("saksi")) return;
+    const d = new Date(r.t + "T00:00:00");
+    const gunAdi = ["Pazar","Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi"][d.getDay()];
+    if (!mezatGunleri.includes(gunAdi)) return;
+    const yil = r.t.substring(0, 4);
+    const hafta = yil + "-W" + String(getWeekNumber(d)).padStart(2, "0");
+    if (!cicekGunVeri[r.c]) cicekGunVeri[r.c] = {};
+    if (!cicekGunVeri[r.c][hafta]) cicekGunVeri[r.c][hafta] = {};
+    if (!cicekGunVeri[r.c][hafta][gunAdi]) cicekGunVeri[r.c][hafta][gunAdi] = { net: 0, d: 0 };
+    cicekGunVeri[r.c][hafta][gunAdi].net += r.net; cicekGunVeri[r.c][hafta][gunAdi].d += r.d;
+  });
+  const cicekGunEndeks = {};
+  Object.entries(cicekGunVeri).forEach(([cicek, haftalar]) => {
+    const gunE = {};
+    mezatGunleri.forEach(g => { gunE[g] = []; });
+    Object.values(haftalar).forEach(hafta => {
+      let hNet = 0, hD = 0;
+      Object.values(hafta).forEach(v => { hNet += v.net; hD += v.d; });
+      const haftaOrt = hD > 0 ? hNet / hD : 0;
+      if (haftaOrt <= 0) return;
+      mezatGunleri.forEach(g => {
+        if (hafta[g] && hafta[g].d > 0) {
+          gunE[g].push((hafta[g].net / hafta[g].d) / haftaOrt);
+        }
+      });
+    });
+    const toplamVeri = mezatGunleri.reduce((s, g) => s + gunE[g].length, 0);
+    if (toplamVeri < 10) return;
+    cicekGunEndeks[cicek] = {};
+    mezatGunleri.forEach(g => {
+      if (gunE[g].length > 0) {
+        cicekGunEndeks[cicek][g] = Math.round((gunE[g].reduce((s,x) => s+x, 0) / gunE[g].length) * 100);
+      }
+    });
+    cicekGunEndeks[cicek]._toplamD = ALL_DATA.filter(r => r.c === cicek).reduce((s,r) => s+r.d, 0);
+  });
 
   // 2026 projeksiyon — EMA baz fiyat (son haftalara daha fazla ağırlık)
   const yil2026 = ALL_DATA.filter(r => r.t.startsWith("2026"));
@@ -755,7 +823,7 @@ function getSeasonalData() {
     return result;
   }
 
-  return { aylarData, cicekMevsim, gunList, ort2026, yilDbn, ozelGunAnaliz, cicekAylik, getHaftalikEndeks, ayGuvenAraligi, backtesting };
+  return { aylarData, cicekMevsim, gunList, ort2026, yilDbn, ozelGunAnaliz, cicekAylik, getHaftalikEndeks, ayGuvenAraligi, backtesting, cicekGunEndeks };
 }
 
 // ═══════════════ FİYAT TAHMİNİ ═══════════════
@@ -1805,24 +1873,61 @@ function render() {
 
     // ── Haftanın Günleri ──
     if (sd.gunList.length > 0) {
-      const maxDbn = sd.gunList[0].dbn;
-      html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:10px">📅 Haftanın Günleri Performansı</div>`;
-      html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Tüm yıllar bazında ortalama dm başı net</div>`;
+      const maxEndeks = Math.max(...sd.gunList.map(g => g.endeks));
+      html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:6px">📅 Haftanın Günleri Performansı</div>`;
+      html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Enflasyondan bağımsız — her hafta kendi içinde normalize edilir. 100 = hafta ortalaması</div>`;
       sd.gunList.forEach((g, i) => {
-        const w = maxDbn > 0 ? (g.dbn / maxDbn * 100) : 0;
-        html += `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-top:${i>0?'1px solid rgba(255,255,255,0.03)':'none'}">`;
-        html += `<div style="width:75px;font-size:12px;font-weight:${i===0?'700':'500'};color:${i===0?'#4ade80':'#e2e8f0'}">${i===0?'🏆 ':''}${g.gun}</div>`;
-        html += `<div style="flex:1;height:6px;background:rgba(255,255,255,0.04);border-radius:3px"><div style="height:100%;border-radius:3px;width:${w}%;background:${i===0?'linear-gradient(90deg,#22c55e,#34d399)':'rgba(148,163,184,0.3)'}"></div></div>`;
-        html += `<div style="width:60px;text-align:right;font-size:13px;font-weight:700;color:${i===0?'#4ade80':'#cbd5e1'}">${fmt(g.dbn)}</div>`;
-        html += `<div style="width:50px;text-align:right;font-size:9px;color:#64748b">${g.mezatSayisi} gün</div>`;
+        const w = maxEndeks > 0 ? (g.endeks / maxEndeks * 100) : 0;
+        const isBest = i === 0;
+        html += `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:${i>0?'1px solid rgba(255,255,255,0.03)':'none'}">`;
+        html += `<div style="width:75px;font-size:12px;font-weight:${isBest?'700':'500'};color:${isBest?'#4ade80':'#e2e8f0'}">${isBest?'🏆 ':''}${g.gun}</div>`;
+        html += `<div style="flex:1;height:6px;background:rgba(255,255,255,0.04);border-radius:3px"><div style="height:100%;border-radius:3px;width:${w}%;background:${isBest?'linear-gradient(90deg,#22c55e,#34d399)':'rgba(148,163,184,0.3)'}"></div></div>`;
+        html += `<div style="width:35px;text-align:center;font-size:14px;font-weight:700;color:${isBest?'#4ade80':'#cbd5e1'}">${g.endeks}</div>`;
+        html += `<div style="width:65px;text-align:right;font-size:9px;color:#64748b">${fmt(g.toplamNet)}</div>`;
+        html += `<div style="width:35px;text-align:right;font-size:8px;color:#475569">${g.mezatSayisi}h</div>`;
         html += `</div>`;
       });
       const best = sd.gunList[0], worst = sd.gunList[sd.gunList.length - 1];
-      if (best && worst && best.dbn > worst.dbn) {
-        const diff = ((best.dbn - worst.dbn) / worst.dbn * 100);
-        html += `<div style="margin-top:8px;padding:8px;border-radius:8px;background:rgba(34,197,94,0.06);font-size:11px;color:#6ee7b7">💡 ${best.gun} günü ${worst.gun}'e göre %${diff.toFixed(0)} daha kârlı</div>`;
+      if (best && worst && best.endeks > worst.endeks) {
+        const diff = best.endeks - worst.endeks;
+        html += `<div style="margin-top:8px;padding:8px;border-radius:8px;background:rgba(34,197,94,0.06);font-size:11px;color:#6ee7b7">💡 ${best.gun} günü hafta ortalamasının %${best.endeks - 100} üstünde, ${worst.gun} %${100 - worst.endeks} altında</div>`;
       }
       html += `</div>`;
+
+      // Çiçek bazlı gün performansı
+      if (sd.cicekGunEndeks && Object.keys(sd.cicekGunEndeks).length > 0) {
+        html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:6px">🌷 Çiçek Bazlı Gün Performansı</div>`;
+        html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Her çiçek hangi gün daha iyi fiyat alıyor?</div>`;
+        // Başlık satırı
+        html += `<div style="display:grid;grid-template-columns:1fr repeat(3,55px);gap:4px;margin-bottom:4px">`;
+        html += `<div style="font-size:8px;color:#475569"></div>`;
+        ["Pzt","Çar","Cum"].forEach(g => { html += `<div style="text-align:center;font-size:8px;color:#64748b;font-weight:600">${g}</div>`; });
+        html += `</div>`;
+        // Çiçek satırları (en çok satılandan)
+        const cicekGunSirali = Object.entries(sd.cicekGunEndeks).sort((a,b) => b[1]._toplamD - a[1]._toplamD).slice(0, 10);
+        cicekGunSirali.forEach(([cicek, gunler]) => {
+          const vals = ["Pazartesi","Çarşamba","Cuma"].map(g => gunler[g] || null);
+          const maxV = Math.max(...vals.filter(v => v !== null));
+          const minV = Math.min(...vals.filter(v => v !== null));
+          html += `<div style="display:grid;grid-template-columns:1fr repeat(3,55px);gap:4px;margin-bottom:2px">`;
+          html += `<div style="font-size:9px;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:4px 0">${esc(cicek)}</div>`;
+          vals.forEach(v => {
+            if (v === null) { html += `<div style="height:24px;border-radius:4px;background:rgba(255,255,255,0.01);display:flex;align-items:center;justify-content:center;font-size:8px;color:#333">—</div>`; }
+            else {
+              const isBest = v === maxV && vals.filter(x=>x!==null).length > 1;
+              const isWorst = v === minV && vals.filter(x=>x!==null).length > 1 && maxV !== minV;
+              let bg;
+              if (v >= 105) bg = "rgba(34,197,94,0.3)";
+              else if (v >= 100) bg = "rgba(34,197,94,0.1)";
+              else if (v >= 95) bg = "rgba(250,204,21,0.1)";
+              else bg = "rgba(239,68,68,0.1)";
+              html += `<div style="height:24px;border-radius:4px;background:${bg};display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:${isBest?'700':'500'};color:${isBest?'#4ade80':isWorst?'#f87171':'#e2e8f0'}">${v}</div>`;
+            }
+          });
+          html += `</div>`;
+        });
+        html += `</div>`;
+      }
     }
 
     // ── Özel Günler ──
