@@ -887,7 +887,33 @@ function getSeasonalData() {
     return result;
   }
 
-  return { aylarData, cicekMevsim, gunList, ort2026, yilDbn, ozelGunAnaliz, cicekAylik, getHaftalikEndeks, ayGuvenAraligi, backtesting, cicekGunEndeks };
+  // Sezon başlangıç/bitiş standart sapması — her çiçeğin sezonu ±kaç gün oynuyor
+  const cicekSezonBilgi = {};
+  Object.entries(cicekAylik).forEach(([cicek, aylar]) => {
+    if (cicek.toLowerCase().includes("saksı") || cicek.toLowerCase().includes("saksi")) return;
+    // Her yılda ilk ve son satış haftasını bul
+    const yilBas = {}; // { "2023": 5 (hafta no), "2024": 7, ... }
+    const yilSon = {};
+    ALL_DATA.filter(r => r.c === cicek).forEach(r => {
+      const yil = r.t.substring(0, 4);
+      const d = new Date(r.t + "T00:00:00");
+      const hafta = getWeekNumber(d);
+      if (!yilBas[yil] || hafta < yilBas[yil]) yilBas[yil] = hafta;
+      if (!yilSon[yil] || hafta > yilSon[yil]) yilSon[yil] = hafta;
+    });
+    const basHaftalar = Object.values(yilBas);
+    const sonHaftalar = Object.values(yilSon);
+    if (basHaftalar.length < 2) return;
+
+    const basOrt = Math.round(basHaftalar.reduce((s,x) => s+x, 0) / basHaftalar.length);
+    const sonOrt = Math.round(sonHaftalar.reduce((s,x) => s+x, 0) / sonHaftalar.length);
+    const basStd = Math.round(Math.sqrt(basHaftalar.reduce((s,x) => s + Math.pow(x - basOrt, 2), 0) / basHaftalar.length) * 7); // gün cinsine çevir
+    const sonStd = Math.round(Math.sqrt(sonHaftalar.reduce((s,x) => s + Math.pow(x - sonOrt, 2), 0) / sonHaftalar.length) * 7);
+
+    cicekSezonBilgi[cicek] = { basOrt, sonOrt, basStd, sonStd, yilSayisi: basHaftalar.length };
+  });
+
+  return { aylarData, cicekMevsim, gunList, ort2026, yilDbn, ozelGunAnaliz, cicekAylik, getHaftalikEndeks, ayGuvenAraligi, backtesting, cicekGunEndeks, cicekSezonBilgi };
 }
 
 // ═══════════════ FİYAT TAHMİNİ ═══════════════
@@ -2142,6 +2168,48 @@ function render() {
     html += `</div></div>`;
     html += `<div style="font-size:9px;color:#475569;margin-top:4px">${cicekSirali.length} çiçek gösteriliyor</div>`;
     html += `</div>`;
+
+    // ── Sezon Başlangıç/Bitiş Bilgisi ──
+    if (sd.cicekSezonBilgi && Object.keys(sd.cicekSezonBilgi).length > 0) {
+      const sezonList = cicekSirali.filter(item => sd.cicekSezonBilgi[item.cicek]).slice(0, state.expanded.sezonBilgi ? 999 : 8);
+      if (sezonList.length > 0) {
+        html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:6px">📅 Sezon Başlangıç & Bitiş Takvimi</div>`;
+        html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Her çiçeğin sezonu genelde hangi haftada başlayıp bitiyor ve ±kaç gün oynayabiliyor</div>`;
+        sezonList.forEach((item, i) => {
+          const sb = sd.cicekSezonBilgi[item.cicek];
+          if (!sb) return;
+          // Hafta numarasını yaklaşık tarihe çevir
+          const haftaToTarih = function(h) {
+            const aylar = ["","Oca","Şub","Mar","Nis","May","Haz","Tem","Ağu","Eyl","Eki","Kas","Ara"];
+            const gun = (h - 1) * 7 + 1;
+            const d = new Date(2026, 0, gun);
+            return d.getDate() + " " + aylar[d.getMonth() + 1];
+          };
+          const basStr = haftaToTarih(sb.basOrt);
+          const sonStr = haftaToTarih(sb.sonOrt);
+          const sezonUzunluk = sb.sonOrt - sb.basOrt;
+          // Sezon bar görseli (52 hafta üzerinde)
+          const barStart = Math.max(0, (sb.basOrt / 52) * 100);
+          const barWidth = Math.max(5, (sezonUzunluk / 52) * 100);
+          html += `<div style="padding:6px 0;border-top:${i>0?'1px solid rgba(255,255,255,0.03)':'none'}">`;
+          html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">`;
+          html += `<div style="font-size:11px;font-weight:600;color:#e2e8f0">${esc(item.cicek)}</div>`;
+          html += `<div style="font-size:9px;color:#64748b">${sb.yilSayisi} yıl verisi</div>`;
+          html += `</div>`;
+          // Sezon bar
+          html += `<div style="position:relative;height:8px;background:rgba(255,255,255,0.03);border-radius:4px;margin-bottom:3px">`;
+          html += `<div style="position:absolute;left:${barStart}%;width:${barWidth}%;height:100%;border-radius:4px;background:linear-gradient(90deg,#22c55e,#4ade80,#22c55e)"></div>`;
+          html += `</div>`;
+          html += `<div style="display:flex;justify-content:space-between;font-size:9px">`;
+          html += `<span style="color:#6ee7b7">Başlangıç: ~${basStr} <span style="color:#475569">±${sb.basStd} gün</span></span>`;
+          html += `<span style="color:#fca5a5">Bitiş: ~${sonStr} <span style="color:#475569">±${sb.sonStd} gün</span></span>`;
+          html += `</div></div>`;
+        });
+        const totalSezon = cicekSirali.filter(item => sd.cicekSezonBilgi[item.cicek]).length;
+        if (totalSezon > 8) html += `<button class="show-more" onclick="toggleExp('sezonBilgi')">${state.expanded.sezonBilgi?'Daha az ▲':'Tümü ('+totalSezon+') ▼'}</button>`;
+        html += `</div>`;
+      }
+    }
 
     // ── Bu Ay Durumun ──
     const buAyData = sd.aylarData[buAy - 1];
