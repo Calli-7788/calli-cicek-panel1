@@ -304,7 +304,7 @@ let state = {
   mevsimDetail: null,
   caSecim: null,
   caSearch: "",
-  riskCicekler: null
+  riskGruplar: null
 };
 
 function setState(updates) {
@@ -567,7 +567,12 @@ function analyzeOzelGun(ad, oncesi, getTarih, yilDbn) {
   return { ad, oncesi, ortEtki, yilSayisi: yilEtkileri.length, stdSapma, guvenSkoru, ortHacim, ortPeak, topCicekler };
 }
 
+let _seasonalCache = null;
+let _seasonalCacheTime = 0;
 function getSeasonalData() {
+  // 30 saniye cache — aynı veriyi tekrar tekrar hesaplama
+  if (_seasonalCache && (Date.now() - _seasonalCacheTime) < 30000) return _seasonalCache;
+  _seasonalCacheTime = Date.now();
   // Her yılın kendi ortalaması
   const yilOrt = {};
   ALL_DATA.forEach(r => {
@@ -914,7 +919,8 @@ function getSeasonalData() {
     cicekSezonBilgi[cicek] = { basOrt, sonOrt, basStd, sonStd, yilSayisi: basHaftalar.length };
   });
 
-  return { aylarData, cicekMevsim, gunList, ort2026, yilDbn, ozelGunAnaliz, cicekAylik, getHaftalikEndeks, ayGuvenAraligi, backtesting, cicekGunEndeks, cicekSezonBilgi };
+  _seasonalCache = { aylarData, cicekMevsim, gunList, ort2026, yilDbn, ozelGunAnaliz, cicekAylik, getHaftalikEndeks, ayGuvenAraligi, backtesting, cicekGunEndeks, cicekSezonBilgi };
+  return _seasonalCache;
 }
 
 // ═══════════════ FİYAT TAHMİNİ ═══════════════
@@ -2696,28 +2702,36 @@ function render() {
     html += `<div class="sec-title" style="margin-top:20px">⚡ Risk Analizi</div>`;
     html += `<div style="font-size:12px;color:#94a3b8;margin-bottom:10px;margin-top:-6px">Mevsimsel arındırılmış risk + dip fiyat riski + Sharpe oranı</div>`;
 
-    // Çiçek seçim filtresi
-    const RISK_VARSAYILAN = ["SÜS LAHANASI",".SÜS LAHANASI","SUS LAHANASI","BIÇME","BİÇME","BIÇME YEŞİL","BİÇME YEŞİL","BIÇME BALYA","BİÇME BALYA","LİSYANTUS","LISYANTUS","LİSYANTUS PEMBE","LİSYANTUS MOR","ŞEBOY","ŞEBBOY","FREZYA","FREZYA MOR","FREZYA BEYAZ","FREZYA PEMBE","FREZYA RENKLI","FREZYA RENKLİ","HÜSNÜYUSUF","HÜSNÜYUSUF PEMBE","HÜSNÜYUSUF KIRMIZI","AMARANTUS","AMARANTUS MİX","AMARANTUS PEMBE","AMARANTUS KIRMIZI","HİPERİCUM","HIPERICUM"];
-    if (!window._RISK_VARS) window._RISK_VARS = RISK_VARSAYILAN;
-    const riskAktifCicekler = [...new Set(ALL_DATA.filter(r => !r.c.toLowerCase().includes("saksı") && !r.c.toLowerCase().includes("saksi")).map(r => r.c))].filter(c => ALL_DATA.filter(r => r.c === c).reduce((s,r) => s+r.d, 0) >= 50);
-    const seciliRiskCicekler = state.riskCicekler || RISK_VARSAYILAN;
-    const riskFiltrelenmis = riskAktifCicekler.filter(c => seciliRiskCicekler.some(v => c.toUpperCase().includes(v.toUpperCase()) || v.toUpperCase().includes(c.toUpperCase())));
-
-    html += `<div style="margin-bottom:10px">`;
-    html += `<div style="font-size:10px;color:#64748b;margin-bottom:5px">Analiz edilecek çiçekler (tıkla ekle/çıkar):</div>`;
-    html += `<div style="display:flex;gap:3px;flex-wrap:wrap;margin-bottom:6px">`;
-    riskAktifCicekler.sort().forEach(c => {
-      const isSelected = riskFiltrelenmis.includes(c);
-      if (!isSelected && !state.expanded.riskAllCicek) return;
-      html += `<button onclick="toggleRiskCicek('${esc(c)}')" style="padding:3px 7px;border-radius:5px;border:1px solid ${isSelected?'rgba(124,58,237,0.3)':'rgba(255,255,255,0.06)'};background:${isSelected?'rgba(124,58,237,0.15)':'transparent'};color:${isSelected?'#c4b5fd':'#475569'};font-size:9px;cursor:pointer">${esc(c)}</button>`;
+    // Basit grup filtresi
+    const RISK_GRUPLARI = [
+      {id:"sus",ad:"Süs Lahanası",keys:["SÜS LAHANASI",".SÜS LAHANASI","SUS LAHANASI"]},
+      {id:"bicme",ad:"Biçme",keys:["BIÇME","BİÇME"]},
+      {id:"frezya",ad:"Frezya",keys:["FREZYA"]},
+      {id:"sebboy",ad:"Şebboy",keys:["ŞEBOY","ŞEBBOY","SEBBOY"]},
+      {id:"lisyantus",ad:"Lisyantus",keys:["LİSYANTUS","LISYANTUS"]},
+      {id:"husnuyusuf",ad:"Hüsnüyusuf",keys:["HÜSNÜYUSUF","HUSNUYUSUF"]},
+      {id:"amarantus",ad:"Amarantus",keys:["AMARANTUS"]},
+      {id:"hipericum",ad:"Hipericum",keys:["HİPERİCUM","HIPERICUM"]}
+    ];
+    if (!state.riskGruplar) state.riskGruplar = RISK_GRUPLARI.map(g => g.id); // hepsi seçili
+    html += `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px">`;
+    RISK_GRUPLARI.forEach(g => {
+      const isActive = state.riskGruplar.includes(g.id);
+      html += `<button onclick="if(state.riskGruplar.includes('${g.id}')){state.riskGruplar=state.riskGruplar.filter(x=>x!=='${g.id}')}else{state.riskGruplar.push('${g.id}')};render()" style="padding:4px 8px;border-radius:6px;border:1px solid ${isActive?'rgba(124,58,237,0.3)':'rgba(255,255,255,0.06)'};background:${isActive?'rgba(124,58,237,0.15)':'transparent'};color:${isActive?'#c4b5fd':'#475569'};font-size:10px;cursor:pointer;font-weight:${isActive?'600':'400'}">${g.ad}</button>`;
     });
     html += `</div>`;
-    html += `<button class="show-more" onclick="toggleExp('riskAllCicek')" style="font-size:9px">${state.expanded.riskAllCicek?'Seçilenleri göster ▲':'Tüm çiçekleri göster ('+riskAktifCicekler.length+') ▼'}</button>`;
-    html += `</div>`;
+
+    // Seçili grup çiçeklerini bul
+    const seciliKeys = [];
+    state.riskGruplar.forEach(gid => { const g = RISK_GRUPLARI.find(x => x.id === gid); if (g) seciliKeys.push(...g.keys); });
+    const riskFiltrelenmis = [...new Set(ALL_DATA.map(r => r.c))].filter(c => {
+      if (c.toLowerCase().includes("saksı") || c.toLowerCase().includes("saksi")) return false;
+      return seciliKeys.some(k => c.toUpperCase().includes(k.toUpperCase()));
+    });
 
     const MIN_DEMET = 50;
     const cicekVolatilite = [];
-    const sdRisk = getSeasonalData();
+    const sdRisk = sd; // mevsimsellik sekmesindeki sd'yi kullan (zaten hesaplanmış olabilir)
     riskFiltrelenmis.forEach(cicek => {
       const cicekData = ALL_DATA.filter(r => r.c === cicek);
       const toplamD = cicekData.reduce((s,r) => s + r.d, 0);
