@@ -461,6 +461,17 @@ const OZEL_GUNLER = [
   { tarih: "11-24", ad: "Öğretmenler Günü", oncesi: 5 },
   { tarih: "12-31", ad: "Yılbaşı Gecesi", oncesi: 7 }
 ];
+// Dini bayramlar — her yıl ~10-11 gün geriye kayar (Hicri takvim)
+const DINI_BAYRAMLAR = {
+  "ramazan": { ad: "Ramazan Bayramı", oncesi: 7, tarihler: {
+    "2019":"2019-06-04","2020":"2020-05-24","2021":"2021-05-13","2022":"2022-05-02",
+    "2023":"2023-04-21","2024":"2024-04-10","2025":"2025-03-30","2026":"2026-03-20"
+  }},
+  "kurban": { ad: "Kurban Bayramı", oncesi: 5, tarihler: {
+    "2019":"2019-08-11","2020":"2020-07-31","2021":"2021-07-20","2022":"2022-07-09",
+    "2023":"2023-06-28","2024":"2024-06-17","2025":"2025-06-06","2026":"2026-05-27"
+  }}
+};
 // Anneler Günü: Mayıs'ın 2. Pazarı — her yıl değişir, dinamik hesaplanır
 function getAnnelerGunu(yil) {
   const mayis1 = new Date(yil, 4, 1);
@@ -468,6 +479,91 @@ function getAnnelerGunu(yil) {
   const ilkPazar = gun === 0 ? 1 : 8 - gun;
   const ikinciPazar = ilkPazar + 7;
   return yil + "-05-" + String(ikinciPazar).padStart(2, "0");
+}
+
+// Özel gün analiz fonksiyonu — peak day, hacim endeksi, std sapma güven, çiçek bazlı
+function analyzeOzelGun(ad, oncesi, getTarih, yilDbn) {
+  const yilEtkileri = [];
+  const yilHacimleri = [];
+  const peakGunler = []; // özel günden kaç gün önce zirve
+  const cicekEtkileri = {}; // çiçek bazlı
+
+  Object.keys(yilDbn).forEach(yil => {
+    const ozelTarih = typeof getTarih === "function" ? getTarih(yil) : yil + "-" + getTarih;
+    if (!ozelTarih) return;
+    const baslangic = new Date(ozelTarih + "T00:00:00");
+    baslangic.setDate(baslangic.getDate() - oncesi);
+    const basStr = baslangic.toISOString().split("T")[0];
+    const oncesiData = ALL_DATA.filter(r => r.t >= basStr && r.t <= ozelTarih && r.t.startsWith(yil));
+    if (oncesiData.length === 0 || yilDbn[yil] <= 0) return;
+
+    const oncesiDbn = oncesiData.reduce((s,r) => s+r.d, 0) > 0 ? oncesiData.reduce((s,r) => s+r.net, 0) / oncesiData.reduce((s,r) => s+r.d, 0) : 0;
+    if (oncesiDbn <= 0) return;
+
+    // Fiyat etkisi
+    yilEtkileri.push(oncesiDbn / yilDbn[yil]);
+
+    // Hacim endeksi — bu haftanın demeti vs yılın haftalık ortalama demeti
+    const yilData = ALL_DATA.filter(r => r.t.startsWith(yil));
+    const yilToplamD = yilData.reduce((s,r) => s+r.d, 0);
+    const yilGunSayisi = new Set(yilData.map(r => r.t)).size;
+    const yilGunlukOrtD = yilGunSayisi > 0 ? yilToplamD / yilGunSayisi : 0;
+    const pencereD = oncesiData.reduce((s,r) => s+r.d, 0);
+    const pencereGunSayisi = new Set(oncesiData.map(r => r.t)).size;
+    const pencereGunlukOrtD = pencereGunSayisi > 0 ? pencereD / pencereGunSayisi : 0;
+    if (yilGunlukOrtD > 0) yilHacimleri.push(pencereGunlukOrtD / yilGunlukOrtD);
+
+    // Peak day — pencere içindeki en yüksek fiyatlı gün
+    const gunFiyat = {};
+    oncesiData.forEach(r => {
+      if (!gunFiyat[r.t]) gunFiyat[r.t] = { net: 0, d: 0 };
+      gunFiyat[r.t].net += r.net; gunFiyat[r.t].d += r.d;
+    });
+    let maxDbn = 0, peakTarih = null;
+    Object.entries(gunFiyat).forEach(([t, v]) => {
+      const dbn = v.d > 0 ? v.net / v.d : 0;
+      if (dbn > maxDbn) { maxDbn = dbn; peakTarih = t; }
+    });
+    if (peakTarih) {
+      const ozelDate = new Date(ozelTarih + "T00:00:00");
+      const peakDate = new Date(peakTarih + "T00:00:00");
+      const fark = Math.round((ozelDate - peakDate) / 864e5);
+      if (fark >= 0) peakGunler.push(fark);
+    }
+
+    // Çiçek bazlı etki
+    const cicekMap = {};
+    oncesiData.forEach(r => {
+      if (r.c.toLowerCase().includes("saksı") || r.c.toLowerCase().includes("saksi")) return;
+      if (!cicekMap[r.c]) cicekMap[r.c] = { net: 0, d: 0 };
+      cicekMap[r.c].net += r.net; cicekMap[r.c].d += r.d;
+    });
+    // Her çiçeğin kendi yıl ortalamasına böl
+    Object.entries(cicekMap).forEach(([c, v]) => {
+      if (v.d <= 0) return;
+      const cicekYilData = yilData.filter(r => r.c === c);
+      const cicekYilDbn = cicekYilData.reduce((s,r) => s+r.d, 0) > 0 ? cicekYilData.reduce((s,r) => s+r.net, 0) / cicekYilData.reduce((s,r) => s+r.d, 0) : 0;
+      if (cicekYilDbn > 0) {
+        if (!cicekEtkileri[c]) cicekEtkileri[c] = [];
+        cicekEtkileri[c].push((v.net / v.d) / cicekYilDbn);
+      }
+    });
+  });
+
+  if (yilEtkileri.length === 0) return null;
+
+  const ortEtki = yilEtkileri.reduce((s,x) => s+x, 0) / yilEtkileri.length;
+  const stdSapma = yilEtkileri.length >= 2 ? Math.sqrt(yilEtkileri.reduce((s,x) => s + Math.pow(x - ortEtki, 2), 0) / yilEtkileri.length) : 0;
+  const guvenSkoru = stdSapma > 0 ? Math.min(100, Math.round((yilEtkileri.length / stdSapma) * 10)) : (yilEtkileri.length >= 3 ? 80 : 30);
+  const ortHacim = yilHacimleri.length > 0 ? yilHacimleri.reduce((s,x) => s+x, 0) / yilHacimleri.length : 1;
+  const ortPeak = peakGunler.length > 0 ? Math.round(peakGunler.reduce((s,x) => s+x, 0) / peakGunler.length) : null;
+
+  // En çok etkilenen 5 çiçek
+  const topCicekler = Object.entries(cicekEtkileri).map(([c, vals]) => ({
+    cicek: c, etki: Math.round((vals.reduce((s,x) => s+x, 0) / vals.length) * 100) - 100, yilSayisi: vals.length
+  })).filter(c => c.yilSayisi >= 2).sort((a,b) => b.etki - a.etki).slice(0, 5);
+
+  return { ad, oncesi, ortEtki, yilSayisi: yilEtkileri.length, stdSapma, guvenSkoru, ortHacim, ortPeak, topCicekler };
 }
 
 function getSeasonalData() {
@@ -724,51 +820,19 @@ function getSeasonalData() {
 
   // Özel gün analizi
   const ozelGunAnaliz = [];
+  // Sabit tarihli özel günler
   OZEL_GUNLER.forEach(og => {
-    const mm = og.tarih.substring(0, 2);
-    const dd = og.tarih.substring(3, 5);
-    let toplamEtki = 0;
-    let etkiSayisi = 0;
-    Object.keys(yilDbn).forEach(yil => {
-      const ozelTarih = yil + "-" + mm + "-" + dd;
-      // Özel günden önceki X gün
-      const baslangic = new Date(ozelTarih + "T00:00:00");
-      baslangic.setDate(baslangic.getDate() - og.oncesi);
-      const basStr = baslangic.toISOString().split("T")[0];
-      const oncesiData = ALL_DATA.filter(r => r.t >= basStr && r.t <= ozelTarih && r.t.startsWith(yil));
-      // O yılın genel ortalaması
-      if (oncesiData.length > 0 && yilDbn[yil] > 0) {
-        const oncesiDbn = oncesiData.reduce((s, r) => s + r.d, 0) > 0 ? oncesiData.reduce((s, r) => s + r.net, 0) / oncesiData.reduce((s, r) => s + r.d, 0) : 0;
-        if (oncesiDbn > 0) {
-          toplamEtki += oncesiDbn / yilDbn[yil];
-          etkiSayisi++;
-        }
-      }
-    });
-    if (etkiSayisi > 0) {
-      ozelGunAnaliz.push({
-        ad: og.ad, tarih: og.tarih, oncesi: og.oncesi,
-        ortEtki: toplamEtki / etkiSayisi,
-        yilSayisi: etkiSayisi
-      });
-    }
+    const result = analyzeOzelGun(og.ad, og.oncesi, og.tarih, yilDbn);
+    if (result) ozelGunAnaliz.push(result);
   });
-  // Anneler günü
-  let annelerEtki = 0, annelerSayisi = 0;
-  Object.keys(yilDbn).forEach(yil => {
-    const ag = getAnnelerGunu(parseInt(yil));
-    const baslangic = new Date(ag + "T00:00:00");
-    baslangic.setDate(baslangic.getDate() - 7);
-    const basStr = baslangic.toISOString().split("T")[0];
-    const oncesiData = ALL_DATA.filter(r => r.t >= basStr && r.t <= ag && r.t.startsWith(yil));
-    if (oncesiData.length > 0 && yilDbn[yil] > 0) {
-      const oncesiDbn = oncesiData.reduce((s, r) => s + r.d, 0) > 0 ? oncesiData.reduce((s, r) => s + r.net, 0) / oncesiData.reduce((s, r) => s + r.d, 0) : 0;
-      if (oncesiDbn > 0) { annelerEtki += oncesiDbn / yilDbn[yil]; annelerSayisi++; }
-    }
+  // Anneler Günü (dinamik)
+  const agResult = analyzeOzelGun("Anneler Günü", 7, function(yil){ return getAnnelerGunu(parseInt(yil)); }, yilDbn);
+  if (agResult) ozelGunAnaliz.push(agResult);
+  // Dini bayramlar (hareketli tarihler)
+  Object.values(DINI_BAYRAMLAR).forEach(db => {
+    const result = analyzeOzelGun(db.ad, db.oncesi, function(yil){ return db.tarihler[yil] || null; }, yilDbn);
+    if (result) ozelGunAnaliz.push(result);
   });
-  if (annelerSayisi > 0) {
-    ozelGunAnaliz.push({ ad: "Anneler Günü", tarih: "05-2.Pazar", oncesi: 7, ortEtki: annelerEtki / annelerSayisi, yilSayisi: annelerSayisi });
-  }
   ozelGunAnaliz.sort((a, b) => b.ortEtki - a.ortEtki);
 
   // Çiçek × Ay × Hafta bazlı mevsimsel veri
@@ -1933,16 +1997,31 @@ function render() {
     // ── Özel Günler ──
     if (sd.ozelGunAnaliz.length > 0) {
       html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:6px">🎉 Özel Günler Fiyat Etkisi</div>`;
-      html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Her özel gün öncesindeki ${sd.ozelGunAnaliz[0]?.oncesi||7} günlük fiyat, o yılın genel ortalamasıyla karşılaştırılır. Yıl bazlı hesaplanır, enflasyondan bağımsızdır.</div>`;
-      sd.ozelGunAnaliz.forEach(og => {
+      html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Özel gün öncesindeki fiyatlar, o yılın ortalamasıyla karşılaştırılır. Enflasyondan bağımsız. Dini bayramlar dahil.</div>`;
+      sd.ozelGunAnaliz.forEach((og, idx) => {
         const etki = Math.round(og.ortEtki * 100);
         const fark = etki - 100;
         const isPositive = fark > 0;
-        const guvenLabel = og.yilSayisi >= 5 ? "Güvenilir" : og.yilSayisi >= 3 ? "Orta" : "Az veri";
-        const guvenColor = og.yilSayisi >= 5 ? "#4ade80" : og.yilSayisi >= 3 ? "#fbbf24" : "#f87171";
-        html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.03)">`;
-        html += `<div><div style="font-size:12px;font-weight:600;color:#f8fafc">${og.ad}</div><div style="font-size:9px;color:#64748b">${og.oncesi} gün öncesinden · <span style="color:${guvenColor}">${og.yilSayisi} yıl (${guvenLabel})</span></div></div>`;
-        html += `<div style="text-align:right"><span style="font-size:15px;font-weight:700;color:${isPositive?'#4ade80':'#f87171'}">${isPositive?'+':''}${fark}%</span></div>`;
+        const guvenCl = og.guvenSkoru >= 70 ? "#4ade80" : og.guvenSkoru >= 40 ? "#fbbf24" : "#f87171";
+        const guvenLabel = og.guvenSkoru >= 70 ? "Güvenilir" : og.guvenSkoru >= 40 ? "Orta" : "Düşük";
+        const hacimTxt = og.ortHacim > 1.3 ? "Hacim ▲" + Math.round((og.ortHacim-1)*100) + "%" : og.ortHacim < 0.8 ? "Hacim ▼" + Math.round((1-og.ortHacim)*100) + "%" : "";
+        const isOpen = state.expanded["ozel_"+idx];
+        html += `<div style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.03);cursor:pointer" onclick="toggleExp('ozel_${idx}')">`;
+        html += `<div style="display:flex;justify-content:space-between;align-items:center">`;
+        html += `<div style="flex:1"><div style="font-size:12px;font-weight:600;color:#f8fafc">${og.ad}</div>`;
+        html += `<div style="font-size:9px;color:#64748b">${og.oncesi} gün önce · <span style="color:${guvenCl}">${og.yilSayisi} yıl · G:${og.guvenSkoru}</span>${og.ortPeak !== null ? ' · Zirve: '+og.ortPeak+' gün önce' : ''}${hacimTxt ? ' · '+hacimTxt : ''}</div></div>`;
+        html += `<div style="display:flex;align-items:center;gap:6px"><span style="font-size:15px;font-weight:700;color:${isPositive?'#4ade80':'#f87171'}">${isPositive?'+':''}${fark}%</span><span style="font-size:9px;color:#475569">${isOpen?'▲':'▼'}</span></div>`;
+        html += `</div>`;
+        // Detay açılırsa — çiçek bazlı etki
+        if (isOpen && og.topCicekler && og.topCicekler.length > 0) {
+          html += `<div style="margin-top:6px;padding:6px 8px;border-radius:6px;background:rgba(255,255,255,0.03)">`;
+          html += `<div style="font-size:9px;color:#64748b;margin-bottom:4px">En çok etkilenen çiçekler:</div>`;
+          og.topCicekler.forEach(c => {
+            const cCl = c.etki > 0 ? "#4ade80" : "#f87171";
+            html += `<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:10px"><span style="color:#e2e8f0">${esc(c.cicek)}</span><span style="color:${cCl};font-weight:600">${c.etki>0?'+':''}${c.etki}%</span></div>`;
+          });
+          html += `</div>`;
+        }
         html += `</div>`;
       });
       // Yaklaşan özel gün uyarısı
@@ -1954,13 +2033,24 @@ function render() {
         const ozelDate = new Date(bugun.getFullYear(), mm - 1, dd);
         if (ozelDate < bugun) ozelDate.setFullYear(ozelDate.getFullYear() + 1);
         const gunFarki = Math.round((ozelDate - bugun) / 864e5);
-        if (gunFarki <= 30) yaklasan.push({ ad: og.ad, gun: gunFarki });
+        if (gunFarki <= 30 && gunFarki >= 0) yaklasan.push({ ad: og.ad, gun: gunFarki });
       });
+      // Dini bayramlar yaklaşan
+      Object.values(DINI_BAYRAMLAR).forEach(db => {
+        const yil = String(bugun.getFullYear());
+        if (db.tarihler[yil]) {
+          const dbDate = new Date(db.tarihler[yil] + "T00:00:00");
+          const fark = Math.round((dbDate - bugun) / 864e5);
+          if (fark <= 30 && fark >= 0) yaklasan.push({ ad: db.ad, gun: fark });
+        }
+      });
+      // Anneler günü
       const agDate = new Date(getAnnelerGunu(bugun.getFullYear()) + "T00:00:00");
       if (agDate >= bugun) {
         const agFark = Math.round((agDate - bugun) / 864e5);
         if (agFark <= 30) yaklasan.push({ ad: "Anneler Günü", gun: agFark });
       }
+      yaklasan.sort((a,b) => a.gun - b.gun);
       if (yaklasan.length > 0) {
         html += `<div style="margin-top:10px;padding:10px;border-radius:8px;background:rgba(250,204,21,0.08);border:1px solid rgba(250,204,21,0.15)">`;
         html += `<div style="font-size:11px;color:#fbbf24;font-weight:600;margin-bottom:4px">⏰ Yaklaşan Özel Günler</div>`;
