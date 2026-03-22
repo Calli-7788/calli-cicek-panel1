@@ -2697,11 +2697,10 @@ function render() {
     html += `<div style="font-size:12px;color:#94a3b8;margin-bottom:10px;margin-top:-6px">Mevsimsel arındırılmış risk + dip fiyat riski + Sharpe oranı</div>`;
 
     // Çiçek seçim filtresi
-    const varsayilanRiskCicek = ["SÜS LAHANASI","SUS LAHANASI",".SÜS LAHANASI","BIÇME","BİÇME","BIÇME YEŞİL","BİÇME YEŞİL","BIÇME BALYA","BİÇME BALYA","LİSYANTUS","LISYANTUS","LİSYANTUS PEMBE","LİSYANTUS MOR","LISYANTUS PEMBE","LISYANTUS MOR","ŞEBOY","ŞEBBOY","FREZYA","FREZYA MOR","FREZYA BEYAZ","FREZYA PEMBE","FREZYA RENKLI","FREZYA RENKLİ","HÜSNÜYUSUF","HÜSNÜYUSUF PEMBE","HÜSNÜYUSUF KIRMIZI","HÜSNÜYUSuF","AMARANTUS","AMARANTUS MİX","AMARANTUS PEMBE","AMARANTUS KIRMIZI","HİPERİCUM","HIPERICUM"];
-    // Aktif çiçekler: son 3 ayda satılan + saksı hariç + min 50 demet
+    const RISK_VARSAYILAN = ["SÜS LAHANASI",".SÜS LAHANASI","SUS LAHANASI","BIÇME","BİÇME","BIÇME YEŞİL","BİÇME YEŞİL","BIÇME BALYA","BİÇME BALYA","LİSYANTUS","LISYANTUS","LİSYANTUS PEMBE","LİSYANTUS MOR","ŞEBOY","ŞEBBOY","FREZYA","FREZYA MOR","FREZYA BEYAZ","FREZYA PEMBE","FREZYA RENKLI","FREZYA RENKLİ","HÜSNÜYUSUF","HÜSNÜYUSUF PEMBE","HÜSNÜYUSUF KIRMIZI","AMARANTUS","AMARANTUS MİX","AMARANTUS PEMBE","AMARANTUS KIRMIZI","HİPERİCUM","HIPERICUM"];
+    if (!window._RISK_VARS) window._RISK_VARS = RISK_VARSAYILAN;
     const riskAktifCicekler = [...new Set(ALL_DATA.filter(r => !r.c.toLowerCase().includes("saksı") && !r.c.toLowerCase().includes("saksi")).map(r => r.c))].filter(c => ALL_DATA.filter(r => r.c === c).reduce((s,r) => s+r.d, 0) >= 50);
-    // Kullanıcı seçimi veya varsayılan
-    const seciliRiskCicekler = state.riskCicekler || varsayilanRiskCicek;
+    const seciliRiskCicekler = state.riskCicekler || RISK_VARSAYILAN;
     const riskFiltrelenmis = riskAktifCicekler.filter(c => seciliRiskCicekler.some(v => c.toUpperCase().includes(v.toUpperCase()) || v.toUpperCase().includes(c.toUpperCase())));
 
     html += `<div style="margin-bottom:10px">`;
@@ -2709,8 +2708,8 @@ function render() {
     html += `<div style="display:flex;gap:3px;flex-wrap:wrap;margin-bottom:6px">`;
     riskAktifCicekler.sort().forEach(c => {
       const isSelected = riskFiltrelenmis.includes(c);
-      if (!isSelected && !state.expanded.riskAllCicek) return; // Seçili olmayanları gizle (açılmadıysa)
-      html += `<button onclick="var cur=state.riskCicekler||${JSON.stringify(varsayilanRiskCicek)}.filter(function(v){return '${esc(c)}'.toUpperCase().includes(v.toUpperCase())||v.toUpperCase().includes('${esc(c)}'.toUpperCase())}).length>0?${JSON.stringify(varsayilanRiskCicek)}:[];var has=cur.some(function(v){return '${esc(c)}'.toUpperCase().includes(v.toUpperCase())});if(has){state.riskCicekler=cur.filter(function(v){return !'${esc(c)}'.toUpperCase().includes(v.toUpperCase())})}else{if(!state.riskCicekler)state.riskCicekler=${JSON.stringify(varsayilanRiskCicek)};state.riskCicekler.push('${esc(c)}')}render()" style="padding:3px 7px;border-radius:5px;border:1px solid ${isSelected?'rgba(124,58,237,0.3)':'rgba(255,255,255,0.06)'};background:${isSelected?'rgba(124,58,237,0.15)':'transparent'};color:${isSelected?'#c4b5fd':'#475569'};font-size:9px;cursor:pointer">${esc(c)}</button>`;
+      if (!isSelected && !state.expanded.riskAllCicek) return;
+      html += `<button onclick="toggleRiskCicek('${esc(c)}')" style="padding:3px 7px;border-radius:5px;border:1px solid ${isSelected?'rgba(124,58,237,0.3)':'rgba(255,255,255,0.06)'};background:${isSelected?'rgba(124,58,237,0.15)':'transparent'};color:${isSelected?'#c4b5fd':'#475569'};font-size:9px;cursor:pointer">${esc(c)}</button>`;
     });
     html += `</div>`;
     html += `<button class="show-more" onclick="toggleExp('riskAllCicek')" style="font-size:9px">${state.expanded.riskAllCicek?'Seçilenleri göster ▲':'Tüm çiçekleri göster ('+riskAktifCicekler.length+') ▼'}</button>`;
@@ -3676,6 +3675,21 @@ function setPreset(p) {
 
 function toggleExp(key) {
   state.expanded[key] = !state.expanded[key];
+  render();
+}
+
+function toggleRiskCicek(cicek) {
+  const VARS = window._RISK_VARS || [];
+  if (!state.riskCicekler) {
+    // İlk tıklamada varsayılan listeden başla
+    state.riskCicekler = VARS.slice();
+  }
+  const has = state.riskCicekler.some(function(v){ return cicek.toUpperCase().includes(v.toUpperCase()) || v.toUpperCase().includes(cicek.toUpperCase()); });
+  if (has) {
+    state.riskCicekler = state.riskCicekler.filter(function(v){ return !cicek.toUpperCase().includes(v.toUpperCase()) && !v.toUpperCase().includes(cicek.toUpperCase()); });
+  } else {
+    state.riskCicekler.push(cicek);
+  }
   render();
 }
 
