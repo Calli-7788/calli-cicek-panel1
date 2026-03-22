@@ -303,7 +303,8 @@ let state = {
   mevsimFilter: "aktif",
   mevsimDetail: null,
   caSecim: null,
-  caSearch: ""
+  caSearch: "",
+  riskCicekler: null
 };
 
 function setState(updates) {
@@ -2693,12 +2694,32 @@ function render() {
 
     // ── RİSK ANALİZİ ──
     html += `<div class="sec-title" style="margin-top:20px">⚡ Risk Analizi</div>`;
-    html += `<div style="font-size:12px;color:#94a3b8;margin-bottom:14px;margin-top:-6px">Mevsimsel arındırılmış risk + dip fiyat riski + Sharpe oranı</div>`;
+    html += `<div style="font-size:12px;color:#94a3b8;margin-bottom:10px;margin-top:-6px">Mevsimsel arındırılmış risk + dip fiyat riski + Sharpe oranı</div>`;
+
+    // Çiçek seçim filtresi
+    const varsayilanRiskCicek = ["SÜS LAHANASI","SUS LAHANASI",".SÜS LAHANASI","BIÇME","BİÇME","BIÇME YEŞİL","BİÇME YEŞİL","BIÇME BALYA","BİÇME BALYA","LİSYANTUS","LISYANTUS","LİSYANTUS PEMBE","LİSYANTUS MOR","LISYANTUS PEMBE","LISYANTUS MOR","ŞEBOY","ŞEBBOY","FREZYA","FREZYA MOR","FREZYA BEYAZ","FREZYA PEMBE","FREZYA RENKLI","FREZYA RENKLİ","HÜSNÜYUSUF","HÜSNÜYUSUF PEMBE","HÜSNÜYUSUF KIRMIZI","HÜSNÜYUSuF","AMARANTUS","AMARANTUS MİX","AMARANTUS PEMBE","AMARANTUS KIRMIZI","HİPERİCUM","HIPERICUM"];
+    // Aktif çiçekler: son 3 ayda satılan + saksı hariç + min 50 demet
+    const riskAktifCicekler = [...new Set(ALL_DATA.filter(r => !r.c.toLowerCase().includes("saksı") && !r.c.toLowerCase().includes("saksi")).map(r => r.c))].filter(c => ALL_DATA.filter(r => r.c === c).reduce((s,r) => s+r.d, 0) >= 50);
+    // Kullanıcı seçimi veya varsayılan
+    const seciliRiskCicekler = state.riskCicekler || varsayilanRiskCicek;
+    const riskFiltrelenmis = riskAktifCicekler.filter(c => seciliRiskCicekler.some(v => c.toUpperCase().includes(v.toUpperCase()) || v.toUpperCase().includes(c.toUpperCase())));
+
+    html += `<div style="margin-bottom:10px">`;
+    html += `<div style="font-size:10px;color:#64748b;margin-bottom:5px">Analiz edilecek çiçekler (tıkla ekle/çıkar):</div>`;
+    html += `<div style="display:flex;gap:3px;flex-wrap:wrap;margin-bottom:6px">`;
+    riskAktifCicekler.sort().forEach(c => {
+      const isSelected = riskFiltrelenmis.includes(c);
+      if (!isSelected && !state.expanded.riskAllCicek) return; // Seçili olmayanları gizle (açılmadıysa)
+      html += `<button onclick="var cur=state.riskCicekler||${JSON.stringify(varsayilanRiskCicek)}.filter(function(v){return '${esc(c)}'.toUpperCase().includes(v.toUpperCase())||v.toUpperCase().includes('${esc(c)}'.toUpperCase())}).length>0?${JSON.stringify(varsayilanRiskCicek)}:[];var has=cur.some(function(v){return '${esc(c)}'.toUpperCase().includes(v.toUpperCase())});if(has){state.riskCicekler=cur.filter(function(v){return !'${esc(c)}'.toUpperCase().includes(v.toUpperCase())})}else{if(!state.riskCicekler)state.riskCicekler=${JSON.stringify(varsayilanRiskCicek)};state.riskCicekler.push('${esc(c)}')}render()" style="padding:3px 7px;border-radius:5px;border:1px solid ${isSelected?'rgba(124,58,237,0.3)':'rgba(255,255,255,0.06)'};background:${isSelected?'rgba(124,58,237,0.15)':'transparent'};color:${isSelected?'#c4b5fd':'#475569'};font-size:9px;cursor:pointer">${esc(c)}</button>`;
+    });
+    html += `</div>`;
+    html += `<button class="show-more" onclick="toggleExp('riskAllCicek')" style="font-size:9px">${state.expanded.riskAllCicek?'Seçilenleri göster ▲':'Tüm çiçekleri göster ('+riskAktifCicekler.length+') ▼'}</button>`;
+    html += `</div>`;
+
     const MIN_DEMET = 50;
     const cicekVolatilite = [];
     const sdRisk = getSeasonalData();
-    FLOWERS.forEach(cicek => {
-      if (cicek.toLowerCase().includes("saksı") || cicek.toLowerCase().includes("saksi")) return;
+    riskFiltrelenmis.forEach(cicek => {
       const cicekData = ALL_DATA.filter(r => r.c === cicek);
       const toplamD = cicekData.reduce((s,r) => s + r.d, 0);
       if (toplamD < MIN_DEMET) return;
