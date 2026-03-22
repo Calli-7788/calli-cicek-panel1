@@ -2691,109 +2691,133 @@ function render() {
       html += `</div>`;
     }
 
+      html += `</div>`;
+    }
+
     // ── RİSK ANALİZİ ──
     html += `<div class="sec-title" style="margin-top:20px">⚡ Risk Analizi</div>`;
-    html += `<div style="font-size:12px;color:#94a3b8;margin-bottom:14px;margin-top:-6px">Yıl bazlı volatilite ve güvenilirlik (min 50 demet, saksı hariç)</div>`;
+    html += `<div style="font-size:12px;color:#94a3b8;margin-bottom:14px;margin-top:-6px">Mevsimsel arındırılmış risk + dip fiyat riski + Sharpe oranı</div>`;
     const MIN_DEMET = 50;
     const cicekVolatilite = [];
+    const sdRisk = getSeasonalData();
     FLOWERS.forEach(cicek => {
-      // Saksı filtresi
       if (cicek.toLowerCase().includes("saksı") || cicek.toLowerCase().includes("saksi")) return;
       const cicekData = ALL_DATA.filter(r => r.c === cicek);
       const toplamD = cicekData.reduce((s,r) => s + r.d, 0);
       if (toplamD < MIN_DEMET) return;
-
-      // Yıl bazlı CV hesapla — her yılın CV'sini ayrı al, ortalamasını al (enflasyon etkisi kalkar)
-      const yilGrp = {};
-      cicekData.forEach(r => {
-        const y = r.t.substring(0, 4);
-        if (!yilGrp[y]) yilGrp[y] = {};
-        if (!yilGrp[y][r.t]) yilGrp[y][r.t] = { net: 0, d: 0 };
-        yilGrp[y][r.t].net += r.net; yilGrp[y][r.t].d += r.d;
+      const cicekMevsimR = sdRisk.cicekMevsim[cicek] || {};
+      const cicekYilOrtR = {};
+      cicekData.forEach(r => { const y = r.t.substring(0,4); if (!cicekYilOrtR[y]) cicekYilOrtR[y] = {net:0,d:0}; cicekYilOrtR[y].net += r.net; cicekYilOrtR[y].d += r.d; });
+      const residuals = [];
+      const yilGrupR = {};
+      cicekData.forEach(r => { const y = r.t.substring(0,4); if (!yilGrupR[y]) yilGrupR[y] = {}; if (!yilGrupR[y][r.t]) yilGrupR[y][r.t] = {net:0,d:0}; yilGrupR[y][r.t].net += r.net; yilGrupR[y][r.t].d += r.d; });
+      Object.entries(yilGrupR).forEach(([yil, gunler]) => {
+        const yilDbnC = cicekYilOrtR[yil] && cicekYilOrtR[yil].d > 0 ? cicekYilOrtR[yil].net / cicekYilOrtR[yil].d : 0;
+        if (yilDbnC <= 0) return;
+        Object.entries(gunler).forEach(([t, v]) => {
+          if (v.d <= 0) return;
+          const ay = parseInt(t.substring(5,7));
+          const mev = cicekMevsimR[ay] ? cicekMevsimR[ay].ortYuzde : 1;
+          const beklenen = yilDbnC * mev;
+          if (beklenen > 0) residuals.push(((v.net / v.d) - beklenen) / beklenen);
+        });
       });
-      const yilCVler = [];
-      let toplamMinF = Infinity, toplamMaxF = 0;
-      Object.entries(yilGrp).forEach(([yil, gunler]) => {
-        const fiyatlar = Object.values(gunler).filter(v => v.d > 0).map(v => v.net / v.d);
-        if (fiyatlar.length < 3) return;
-        const ort = fiyatlar.reduce((s, x) => s + x, 0) / fiyatlar.length;
-        const varyans = fiyatlar.reduce((s, x) => s + Math.pow(x - ort, 2), 0) / fiyatlar.length;
-        const cv = ort > 0 ? (Math.sqrt(varyans) / ort * 100) : 0;
-        yilCVler.push(cv);
-        toplamMinF = Math.min(toplamMinF, ...fiyatlar);
-        toplamMaxF = Math.max(toplamMaxF, ...fiyatlar);
+      const ort = toplamD > 0 ? cicekData.reduce((s,r) => s+r.net, 0) / toplamD : 0;
+      let residualCV = 0;
+      if (residuals.length >= 3) {
+        const rO = residuals.reduce((s,x) => s+x, 0) / residuals.length;
+        const rS = Math.sqrt(residuals.reduce((s,x) => s + Math.pow(x - rO, 2), 0) / residuals.length);
+        residualCV = Math.abs(rO + 1) > 0 ? (rS / Math.abs(rO + 1) * 100) : rS * 100;
+      }
+      let dipSayisi = 0, toplamGun = 0;
+      Object.entries(yilGrupR).forEach(([yil, gunler]) => {
+        const yilDbnC = cicekYilOrtR[yil] && cicekYilOrtR[yil].d > 0 ? cicekYilOrtR[yil].net / cicekYilOrtR[yil].d : 0;
+        if (yilDbnC <= 0) return;
+        Object.entries(gunler).forEach(([t, v]) => { if (v.d <= 0) return; toplamGun++; if ((v.net / v.d) < yilDbnC * 0.5) dipSayisi++; });
       });
-      if (yilCVler.length === 0) return;
-      const ortCV = yilCVler.reduce((s, x) => s + x, 0) / yilCVler.length;
-      const ort = cicekData.reduce((s,r) => s+r.d, 0) > 0 ? cicekData.reduce((s,r) => s+r.net, 0) / cicekData.reduce((s,r) => s+r.d, 0) : 0;
-
-      let riskSkoru = Math.min(100, Math.round(ortCV * 1.5));
+      const dipOrani = toplamGun > 0 ? (dipSayisi / toplamGun * 100) : 0;
+      const residualStd = residuals.length >= 3 ? Math.sqrt(residuals.reduce((s,x) => s + Math.pow(x, 2), 0) / residuals.length) : 1;
+      const toplamNet = cicekData.reduce((s,r) => s + r.net, 0);
+      const sharpe = residualStd > 0 && toplamNet > 0 ? (Math.log(toplamNet) / residualStd) : 0;
+      let riskSkoru = Math.min(100, Math.round(residualCV * 1.2 + dipOrani * 0.5));
       let riskLabel, riskColor, riskBg;
-      if (riskSkoru <= 25) { riskLabel = "Düşük Risk"; riskColor = "#4ade80"; riskBg = "rgba(34,197,94,0.1)"; }
-      else if (riskSkoru <= 50) { riskLabel = "Orta Risk"; riskColor = "#fbbf24"; riskBg = "rgba(250,204,21,0.1)"; }
-      else if (riskSkoru <= 75) { riskLabel = "Yüksek Risk"; riskColor = "#fb923c"; riskBg = "rgba(251,146,60,0.1)"; }
+      if (riskSkoru <= 25) { riskLabel = "Düşük"; riskColor = "#4ade80"; riskBg = "rgba(34,197,94,0.1)"; }
+      else if (riskSkoru <= 50) { riskLabel = "Orta"; riskColor = "#fbbf24"; riskBg = "rgba(250,204,21,0.1)"; }
+      else if (riskSkoru <= 75) { riskLabel = "Yüksek"; riskColor = "#fb923c"; riskBg = "rgba(251,146,60,0.1)"; }
       else { riskLabel = "Çok Yüksek"; riskColor = "#f87171"; riskBg = "rgba(239,68,68,0.1)"; }
-      cicekVolatilite.push({ cicek, ort, cv: ortCV, minF: toplamMinF, maxF: toplamMaxF, riskSkoru, riskLabel, riskColor, riskBg, toplamD, yilSayisi: yilCVler.length });
+      cicekVolatilite.push({ cicek, ort, residualCV, dipOrani, sharpe, riskSkoru, riskLabel, riskColor, riskBg, toplamD });
     });
     cicekVolatilite.sort((a, b) => a.riskSkoru - b.riskSkoru);
 
-    // Güvenli limanlar
     const guvenliCicekler = cicekVolatilite.filter(c => c.riskSkoru <= 30);
     if (guvenliCicekler.length > 0) {
-      html += `<div class="card" style="margin-bottom:14px;background:rgba(34,197,94,0.06);border-color:rgba(34,197,94,0.12)"><div style="font-size:13px;font-weight:700;color:#4ade80;margin-bottom:10px">🛡 Güvenli Liman Çiçekleri</div>`;
+      html += `<div class="card" style="margin-bottom:14px;background:rgba(34,197,94,0.06);border-color:rgba(34,197,94,0.12)"><div style="font-size:13px;font-weight:700;color:#4ade80;margin-bottom:8px">🛡 Güvenli Liman Çiçekleri</div>`;
       guvenliCicekler.slice(0, 5).forEach(c => {
-        html += `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid rgba(255,255,255,0.03)"><div style="flex:1"><div style="font-size:12px;font-weight:600;color:#e2e8f0">${esc(c.cicek)}</div><div style="font-size:9px;color:#64748b">${fmt(c.minF)}–${fmt(c.maxF)} · ${new Intl.NumberFormat("tr-TR").format(c.toplamD)}dm</div></div><div style="text-align:right"><div style="font-size:13px;font-weight:700;color:#4ade80">${fmt(c.ort)}</div><div style="font-size:9px;color:#4ade80">Risk: ${c.riskSkoru}</div></div></div>`;
+        html += `<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid rgba(255,255,255,0.03)"><div style="flex:1"><div style="font-size:12px;font-weight:600;color:#e2e8f0">${esc(c.cicek)}</div><div style="font-size:9px;color:#64748b">Dip:%${c.dipOrani.toFixed(0)} · Sharpe:${c.sharpe.toFixed(1)}</div></div><div style="text-align:right"><div style="font-size:13px;font-weight:700;color:#4ade80">R:${c.riskSkoru}</div></div></div>`;
       });
       html += `</div>`;
     }
-    // Riskli çiçekler
-    // Risk haritası
     if (cicekVolatilite.length > 0) {
-      html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:10px">📊 Tüm Çiçekler Risk Skoru</div>`;
+      html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:6px">📊 Risk & Getiri Tablosu</div>`;
+      html += `<div style="font-size:9px;color:#64748b;margin-bottom:8px">R=risk skoru · D=dip riski% · S=Sharpe (yüksek=iyi)</div>`;
       const riskShow = state.expanded.riskCicek ? 999 : 10;
       cicekVolatilite.slice(0, riskShow).forEach((c, i) => {
-        html += `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-top:${i>0?'1px solid rgba(255,255,255,0.03)':'none'}"><div style="flex:1;font-size:11px;color:#e2e8f0">${esc(c.cicek)}</div><div style="width:80px;height:4px;background:rgba(255,255,255,0.04);border-radius:2px"><div style="height:100%;border-radius:2px;width:${c.riskSkoru}%;background:linear-gradient(90deg,#22c55e,#fbbf24,#f87171)"></div></div><span style="font-size:10px;padding:2px 6px;border-radius:4px;background:${c.riskBg};color:${c.riskColor};font-weight:600;min-width:40px;text-align:center">${c.riskSkoru}</span></div>`;
+        html += `<div style="display:flex;align-items:center;gap:5px;padding:5px 0;border-top:${i>0?'1px solid rgba(255,255,255,0.03)':'none'}"><div style="flex:1;font-size:10px;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.cicek)}</div><div style="width:45px;height:4px;background:rgba(255,255,255,0.04);border-radius:2px"><div style="height:100%;border-radius:2px;width:${c.riskSkoru}%;background:linear-gradient(90deg,#22c55e,#fbbf24,#f87171)"></div></div><span style="font-size:9px;padding:1px 4px;border-radius:3px;background:${c.riskBg};color:${c.riskColor};font-weight:600">${c.riskSkoru}</span><span style="font-size:8px;color:#64748b">D${c.dipOrani.toFixed(0)}</span><span style="font-size:8px;color:${c.sharpe>5?'#4ade80':c.sharpe>3?'#fbbf24':'#f87171'};font-weight:600">S${c.sharpe.toFixed(1)}</span></div>`;
       });
       if (cicekVolatilite.length > 10) html += `<button class="show-more" onclick="toggleExp('riskCicek')">${state.expanded.riskCicek?'Daha az ▲':'Tümü ('+cicekVolatilite.length+') ▼'}</button>`;
       html += `</div>`;
     }
+    // Çiçek × Şube Risk Matrisi
+    if (cicekVolatilite.length > 0) {
+      const topSubeler = [...new Set(ALL_DATA.map(r => r.s))].filter(s => ALL_DATA.filter(r => r.s === s).reduce((sm,r) => sm+r.d, 0) >= MIN_DEMET).slice(0, 6);
+      const topCicekler = cicekVolatilite.slice(0, 8).map(c => c.cicek);
+      if (topSubeler.length > 0) {
+        html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:6px">🗺 Çiçek × Şube Risk Matrisi</div>`;
+        html += `<div style="font-size:9px;color:#64748b;margin-bottom:6px">Düşük = güvenli (yeşil), yüksek = riskli (kırmızı)</div>`;
+        html += `<div style="overflow-x:auto"><div style="min-width:320px"><div style="display:grid;grid-template-columns:75px repeat(${topSubeler.length},1fr);gap:2px;margin-bottom:2px"><div></div>`;
+        topSubeler.forEach(s => { html += `<div style="text-align:center;font-size:7px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s)}</div>`; });
+        html += `</div>`;
+        topCicekler.forEach(cicek => {
+          html += `<div style="display:grid;grid-template-columns:75px repeat(${topSubeler.length},1fr);gap:2px;margin-bottom:2px"><div style="font-size:8px;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:3px 0">${esc(cicek)}</div>`;
+          topSubeler.forEach(sube => {
+            const kd = ALL_DATA.filter(r => r.c === cicek && r.s === sube);
+            if (kd.length < 3) { html += `<div style="height:20px;border-radius:3px;background:rgba(255,255,255,0.01)"></div>`; return; }
+            const cM = sdRisk.cicekMevsim[cicek] || {};
+            const cYO = {};
+            kd.forEach(r => { const y=r.t.substring(0,4); if(!cYO[y]) cYO[y]={net:0,d:0}; cYO[y].net+=r.net; cYO[y].d+=r.d; });
+            const res = [];
+            kd.forEach(r => { const y=r.t.substring(0,4); const yd=cYO[y]&&cYO[y].d>0?cYO[y].net/cYO[y].d:0; if(yd<=0||r.d<=0) return; const m=parseInt(r.t.substring(5,7)); const mv=cM[m]?cM[m].ortYuzde:1; res.push(((r.net/r.d)-yd*mv)/(yd*mv)); });
+            let cv = 50;
+            if (res.length >= 3) { const o=res.reduce((s,x)=>s+x,0)/res.length; cv=Math.min(100,Math.round(Math.sqrt(res.reduce((s,x)=>s+Math.pow(x-o,2),0)/res.length)*100)); }
+            let bg;
+            if (cv <= 20) bg = "rgba(34,197,94,0.4)"; else if (cv <= 35) bg = "rgba(34,197,94,0.2)"; else if (cv <= 50) bg = "rgba(250,204,21,0.15)"; else bg = "rgba(239,68,68,0.2)";
+            html += `<div style="height:20px;border-radius:3px;background:${bg};display:flex;align-items:center;justify-content:center;font-size:7px;color:#e2e8f0;font-weight:600">${cv}</div>`;
+          });
+          html += `</div>`;
+        });
+        html += `</div></div></div>`;
+      }
+    }
     // Şube güvenilirlik
     const subeGuvenilirlik = [];
     BRANCHES.forEach(sube => {
-      const subeData = ALL_DATA.filter(r => r.s === sube && !r.c.toLowerCase().includes("saksı") && !r.c.toLowerCase().includes("saksi"));
-      const toplamD = subeData.reduce((s,r) => s + r.d, 0);
-      if (toplamD < MIN_DEMET) return;
-      // Yıl bazlı CV
-      const yilGrp = {};
-      subeData.forEach(r => { const y = r.t.substring(0,4); if (!yilGrp[y]) yilGrp[y] = {}; if (!yilGrp[y][r.t]) yilGrp[y][r.t] = {net:0,d:0}; yilGrp[y][r.t].net += r.net; yilGrp[y][r.t].d += r.d; });
-      const yilCVler = [];
-      Object.values(yilGrp).forEach(gunler => {
-        const fiyatlar = Object.values(gunler).filter(v => v.d > 0).map(v => v.net / v.d);
-        if (fiyatlar.length < 3) return;
-        const ort = fiyatlar.reduce((s,x) => s+x, 0) / fiyatlar.length;
-        const cv = ort > 0 ? (Math.sqrt(fiyatlar.reduce((s,x) => s + Math.pow(x-ort,2), 0) / fiyatlar.length) / ort * 100) : 0;
-        yilCVler.push(cv);
-      });
-      if (yilCVler.length === 0) return;
-      const ortCV = yilCVler.reduce((s,x) => s+x, 0) / yilCVler.length;
-      const ort = toplamD > 0 ? subeData.reduce((s,r) => s+r.net, 0) / toplamD : 0;
-      const aktifAylar = new Set(subeData.map(r => r.t.substring(0, 7))).size;
-      const cvScore = Math.max(0, 100 - ortCV * 1.5);
-      const aktiviteScore = Math.min(100, aktifAylar * 2);
-      const hacimScore = Math.min(100, Math.log10(toplamD + 1) * 25);
-      const guvenScore = Math.round(cvScore * 0.5 + aktiviteScore * 0.25 + hacimScore * 0.25);
-      let guvenLabel, guvenColor;
-      if (guvenScore >= 75) { guvenLabel = "Çok Güvenilir"; guvenColor = "#4ade80"; }
-      else if (guvenScore >= 55) { guvenLabel = "Güvenilir"; guvenColor = "#6ee7b7"; }
-      else if (guvenScore >= 40) { guvenLabel = "Orta"; guvenColor = "#fbbf24"; }
-      else { guvenLabel = "Dikkatli Ol"; guvenColor = "#f87171"; }
-      subeGuvenilirlik.push({ sube, ort, guvenScore, guvenLabel, guvenColor, toplamD, aktifAylar });
+      const sd2 = ALL_DATA.filter(r => r.s === sube && !r.c.toLowerCase().includes("saksı") && !r.c.toLowerCase().includes("saksi"));
+      const tD = sd2.reduce((s,r) => s+r.d, 0); if (tD < MIN_DEMET) return;
+      const yG = {}; sd2.forEach(r => { const y=r.t.substring(0,4); if(!yG[y]) yG[y]={}; if(!yG[y][r.t]) yG[y][r.t]={net:0,d:0}; yG[y][r.t].net+=r.net; yG[y][r.t].d+=r.d; });
+      const yCV = []; Object.values(yG).forEach(g => { const f=Object.values(g).filter(v=>v.d>0).map(v=>v.net/v.d); if(f.length<3) return; const o=f.reduce((s,x)=>s+x,0)/f.length; yCV.push(o>0?(Math.sqrt(f.reduce((s,x)=>s+Math.pow(x-o,2),0)/f.length)/o*100):0); });
+      if (!yCV.length) return;
+      const oCV = yCV.reduce((s,x)=>s+x,0)/yCV.length;
+      const aA = new Set(sd2.map(r=>r.t.substring(0,7))).size;
+      const gS = Math.round(Math.max(0,100-oCV*1.5)*0.5 + Math.min(100,aA*2)*0.25 + Math.min(100,Math.log10(tD+1)*25)*0.25);
+      let gL, gC;
+      if(gS>=75){gL="Çok Güvenilir";gC="#4ade80";}else if(gS>=55){gL="Güvenilir";gC="#6ee7b7";}else if(gS>=40){gL="Orta";gC="#fbbf24";}else{gL="Dikkatli Ol";gC="#f87171";}
+      subeGuvenilirlik.push({sube,guvenScore:gS,guvenLabel:gL,guvenColor:gC,toplamD:tD,aktifAylar:aA});
     });
-    subeGuvenilirlik.sort((a, b) => b.guvenScore - a.guvenScore);
+    subeGuvenilirlik.sort((a,b)=>b.guvenScore-a.guvenScore);
     if (subeGuvenilirlik.length > 0) {
       html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:10px">📍 Şube Güvenilirlik</div>`;
-      subeGuvenilirlik.forEach((s, i) => {
-        html += `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:${i>0?'1px solid rgba(255,255,255,0.03)':'none'}"><div style="width:18px;font-size:10px;font-weight:700;color:${i<3?'#fbbf24':'#475569'}">${i+1}</div><div style="flex:1"><div style="font-size:12px;font-weight:600;color:#e2e8f0">${esc(s.sube)}</div><div style="font-size:9px;color:#475569">${s.aktifAylar} ay · ${new Intl.NumberFormat("tr-TR").format(s.toplamD)}dm</div></div><div style="text-align:right"><div style="font-size:14px;font-weight:800;color:${s.guvenColor}">${s.guvenScore}</div><div style="font-size:8px;color:${s.guvenColor}">${s.guvenLabel}</div></div></div>`;
+      subeGuvenilirlik.forEach((s,i) => {
+        html += `<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-top:${i>0?'1px solid rgba(255,255,255,0.03)':'none'}"><div style="width:18px;font-size:10px;font-weight:700;color:${i<3?'#fbbf24':'#475569'}">${i+1}</div><div style="flex:1"><div style="font-size:12px;font-weight:600;color:#e2e8f0">${esc(s.sube)}</div><div style="font-size:9px;color:#475569">${s.aktifAylar} ay · ${new Intl.NumberFormat("tr-TR").format(s.toplamD)}dm</div></div><div style="text-align:right"><div style="font-size:14px;font-weight:800;color:${s.guvenColor}">${s.guvenScore}</div><div style="font-size:8px;color:${s.guvenColor}">${s.guvenLabel}</div></div></div>`;
       });
       html += `</div>`;
     }
