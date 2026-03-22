@@ -2363,6 +2363,125 @@ function render() {
       html += ` · En düşük: <strong style="color:#f87171">${ayAdlari[enKotuAy]} (${Math.round(cicekMevsim[enKotuAy].ortYuzde * 100)})</strong>`;
       html += `</div>`;
 
+      // ── Z-Score: Bu ay fırsat mı risk mi? ──
+      const buAyMevsimZ = cicekMevsim[buAy];
+      if (buAyMevsimZ && cicekOrt2026 > 0) {
+        const buAyCicekData = cicek2026.filter(r => parseInt(r.t.substring(5,7)) === buAy);
+        const buAyCicekDbn = buAyCicekData.reduce((s,r) => s+r.d, 0) > 0 ? buAyCicekData.reduce((s,r) => s+r.net, 0) / buAyCicekData.reduce((s,r) => s+r.d, 0) : 0;
+        if (buAyCicekDbn > 0) {
+          // Geçmiş yılların bu ayındaki oranları al
+          const gecmisOranlar = [];
+          ALL_DATA.filter(r => r.c === secili.cicek && parseInt(r.t.substring(5,7)) === buAy).forEach(r => {
+            const yil = r.t.substring(0,4);
+            if (yil === String(new Date().getFullYear())) return;
+            if (!gecmisOranlar._tmp) gecmisOranlar._tmp = {};
+            if (!gecmisOranlar._tmp[yil]) gecmisOranlar._tmp[yil] = {net:0,d:0};
+            gecmisOranlar._tmp[yil].net += r.net; gecmisOranlar._tmp[yil].d += r.d;
+          });
+          if (gecmisOranlar._tmp) {
+            const oranlar = [];
+            const cicekYilOrtTmp = {};
+            ALL_DATA.filter(r => r.c === secili.cicek).forEach(r => {
+              const y = r.t.substring(0,4);
+              if (!cicekYilOrtTmp[y]) cicekYilOrtTmp[y] = {net:0,d:0};
+              cicekYilOrtTmp[y].net += r.net; cicekYilOrtTmp[y].d += r.d;
+            });
+            Object.entries(gecmisOranlar._tmp).forEach(([yil, v]) => {
+              const yilDbnC = cicekYilOrtTmp[yil] && cicekYilOrtTmp[yil].d > 0 ? cicekYilOrtTmp[yil].net / cicekYilOrtTmp[yil].d : 0;
+              if (yilDbnC > 0 && v.d > 0) oranlar.push((v.net / v.d) / yilDbnC);
+            });
+            if (oranlar.length >= 2) {
+              const mevsOrt = oranlar.reduce((s,x) => s+x, 0) / oranlar.length;
+              const mevsStd = Math.sqrt(oranlar.reduce((s,x) => s + Math.pow(x - mevsOrt, 2), 0) / oranlar.length);
+              const buAyOran = buAyCicekDbn / cicekOrt2026;
+              const zScore = mevsStd > 0 ? ((buAyOran - mevsOrt) / mevsStd) : 0;
+              const zLabel = zScore > 1.5 ? "🔥 Olağanüstü Fırsat" : zScore > 0.5 ? "📈 Ortalamanın Üstünde" : zScore > -0.5 ? "➡️ Normal" : zScore > -1.5 ? "📉 Ortalamanın Altında" : "⚠️ Dikkat — Çok Düşük";
+              const zColor = zScore > 1.5 ? "#4ade80" : zScore > 0.5 ? "#6ee7b7" : zScore > -0.5 ? "#94a3b8" : zScore > -1.5 ? "#fbbf24" : "#f87171";
+              html += `<div class="card" style="margin-bottom:14px;background:${zScore>0.5?'rgba(34,197,94,0.06)':zScore<-0.5?'rgba(239,68,68,0.06)':'rgba(255,255,255,0.03)'};border-color:${zScore>0.5?'rgba(34,197,94,0.12)':zScore<-0.5?'rgba(239,68,68,0.12)':'rgba(255,255,255,0.06)'}">`;
+              html += `<div style="font-size:12px;font-weight:700;color:${zColor};margin-bottom:6px">${zLabel}</div>`;
+              html += `<div style="display:flex;gap:14px;font-size:11px">`;
+              html += `<div><span style="color:#64748b">Z-Score:</span> <strong style="color:${zColor}">${zScore>=0?'+':''}${zScore.toFixed(2)}</strong></div>`;
+              html += `<div><span style="color:#64748b">Şu an:</span> <strong style="color:#f8fafc">${fmt(buAyCicekDbn)}</strong></div>`;
+              html += `<div><span style="color:#64748b">Beklenen:</span> <strong style="color:#94a3b8">${fmt(cicekOrt2026 * mevsOrt)}</strong></div>`;
+              html += `</div>`;
+              html += `<div style="font-size:9px;color:#475569;margin-top:4px">${oranlar.length} yıl verisine göre. Z>1.5 = nadir fırsat, Z<-1.5 = nadir düşüklük</div>`;
+              html += `</div>`;
+            }
+          }
+        }
+      }
+
+      // ── Aylık Güven Seviyesi (varyans bazlı) ──
+      html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:8px">📊 Aylık Endeks Güvenilirliği</div>`;
+      html += `<div style="font-size:10px;color:#64748b;margin-bottom:8px">Yıllar arası tutarlılık — dar bant = güvenilir, geniş bant = oynak</div>`;
+      html += `<div style="display:flex;gap:4px;flex-wrap:wrap">`;
+      aktifAylar.forEach(m => {
+        // Bu çiçeğin bu ayındaki yıllık oranları
+        const yilOranlar = [];
+        const cicekYilOrtTmp2 = {};
+        ALL_DATA.filter(r => r.c === secili.cicek).forEach(r => {
+          const y = r.t.substring(0,4); if (!cicekYilOrtTmp2[y]) cicekYilOrtTmp2[y] = {net:0,d:0}; cicekYilOrtTmp2[y].net += r.net; cicekYilOrtTmp2[y].d += r.d;
+        });
+        ALL_DATA.filter(r => r.c === secili.cicek && parseInt(r.t.substring(5,7)) === m).forEach(r => {
+          const y = r.t.substring(0,4);
+          if (!yilOranlar._tmp) yilOranlar._tmp = {};
+          if (!yilOranlar._tmp[y]) yilOranlar._tmp[y] = {net:0,d:0};
+          yilOranlar._tmp[y].net += r.net; yilOranlar._tmp[y].d += r.d;
+        });
+        const oranlar2 = [];
+        if (yilOranlar._tmp) {
+          Object.entries(yilOranlar._tmp).forEach(([y, v]) => {
+            const yDbn = cicekYilOrtTmp2[y] && cicekYilOrtTmp2[y].d > 0 ? cicekYilOrtTmp2[y].net / cicekYilOrtTmp2[y].d : 0;
+            if (yDbn > 0 && v.d > 0) oranlar2.push((v.net / v.d) / yDbn);
+          });
+        }
+        let gLabel = "—", gColor = "#475569";
+        if (oranlar2.length >= 2) {
+          const oOrt = oranlar2.reduce((s,x) => s+x, 0) / oranlar2.length;
+          const oStd = Math.sqrt(oranlar2.reduce((s,x) => s + Math.pow(x - oOrt, 2), 0) / oranlar2.length);
+          const cv = oOrt > 0 ? (oStd / oOrt * 100) : 0;
+          if (cv <= 10) { gLabel = "●"; gColor = "#4ade80"; }
+          else if (cv <= 20) { gLabel = "●"; gColor = "#fbbf24"; }
+          else { gLabel = "●"; gColor = "#f87171"; }
+        }
+        html += `<div style="text-align:center;padding:4px 6px;border-radius:4px;background:rgba(255,255,255,0.03);min-width:30px"><div style="font-size:8px;color:#64748b">${ayKisa[m]}</div><div style="font-size:12px;color:${gColor}">${gLabel}</div></div>`;
+      });
+      html += `</div>`;
+      html += `<div style="font-size:8px;color:#475569;margin-top:4px">🟢 CV≤10% güvenilir · 🟡 CV≤20% orta · 🔴 CV>20% oynak</div>`;
+      html += `</div>`;
+
+      // ── Şube Bazlı Diferansiyel ──
+      const cicekSubeAy = {};
+      ALL_DATA.filter(r => r.c === secili.cicek && !r.s.toLowerCase().includes("saksı")).forEach(r => {
+        const ay = parseInt(r.t.substring(5,7));
+        if (!cicekSubeAy[r.s]) cicekSubeAy[r.s] = {};
+        if (!cicekSubeAy[r.s][ay]) cicekSubeAy[r.s][ay] = {net:0,d:0};
+        cicekSubeAy[r.s][ay].net += r.net; cicekSubeAy[r.s][ay].d += r.d;
+      });
+      // Bu ayda aktif şubeler
+      const subePerf = Object.entries(cicekSubeAy).map(([sube, aylar]) => {
+        const buAyV = aylar[buAy];
+        const buAyDbn = buAyV && buAyV.d > 0 ? buAyV.net / buAyV.d : 0;
+        const toplamD = Object.values(aylar).reduce((s,v) => s + v.d, 0);
+        return { sube, buAyDbn, toplamD, aktifAySayisi: Object.keys(aylar).length };
+      }).filter(s => s.buAyDbn > 0 || s.toplamD >= 20).sort((a,b) => b.buAyDbn - a.buAyDbn);
+
+      if (subePerf.length > 0) {
+        html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:8px">📍 ${esc(secili.cicek)} — Şube Performansı (${ayAdlari[buAy]})</div>`;
+        html += `<div style="font-size:10px;color:#64748b;margin-bottom:8px">Bu çiçeği bu ay hangi şubeye göndermek daha kârlı?</div>`;
+        const maxSubeDbn = subePerf[0].buAyDbn;
+        subePerf.slice(0, 8).forEach((s, i) => {
+          const w = maxSubeDbn > 0 ? (s.buAyDbn / maxSubeDbn * 100) : 0;
+          const isBest = i === 0;
+          html += `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-top:${i>0?'1px solid rgba(255,255,255,0.03)':'none'}">`;
+          html += `<div style="width:70px;font-size:10px;font-weight:${isBest?'700':'500'};color:${isBest?'#4ade80':'#e2e8f0'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${isBest?'🏆 ':''}${esc(s.sube)}</div>`;
+          html += `<div style="flex:1;height:5px;background:rgba(255,255,255,0.04);border-radius:3px"><div style="height:100%;border-radius:3px;width:${w}%;background:${isBest?'#4ade80':'rgba(148,163,184,0.3)'}"></div></div>`;
+          html += `<div style="width:50px;text-align:right;font-size:12px;font-weight:700;color:${isBest?'#4ade80':'#cbd5e1'}">${s.buAyDbn > 0 ? fmt(s.buAyDbn) : '—'}</div>`;
+          html += `</div>`;
+        });
+        html += `</div>`;
+      }
+
     } else {
       html += `<div class="card" style="text-align:center;padding:30px;color:#475569;font-size:13px">Çiçek bulunamadı. Arama terimini değiştirin.</div>`;
     }
