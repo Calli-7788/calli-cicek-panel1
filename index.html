@@ -2560,39 +2560,106 @@ function render() {
 
     // ── YILLIK TREND ──
     html += `<div class="sec-title" style="margin-top:20px">📈 Yıllık Trend</div>`;
+    // TÜFE çarpan tablosu (2019=100 bazında yaklaşık kümülatif TÜFE)
+    const TUFE = {"2019":1,"2020":1.15,"2021":1.55,"2022":3.15,"2023":4.90,"2024":7.35,"2025":9.20,"2026":10.50};
     const yilIstatistik = {};
     ALL_DATA.forEach(r => { const y = r.t.substring(0, 4); if (!yilIstatistik[y]) yilIstatistik[y] = { net: 0, d: 0 }; yilIstatistik[y].net += r.net; yilIstatistik[y].d += r.d; });
-    const yilListesi = Object.entries(yilIstatistik).map(([y, v]) => ({ yil: y, net: v.net, d: v.d, dbn: v.d > 0 ? v.net / v.d : 0 })).sort((a, b) => a.yil.localeCompare(b.yil));
+    const yilListesi = Object.entries(yilIstatistik).map(([y, v]) => {
+      const dbn = v.d > 0 ? v.net / v.d : 0;
+      const reelDbn = TUFE[y] ? dbn / TUFE[y] * TUFE["2019"] : dbn; // 2019 bazlı reel
+      return { yil: y, net: v.net, d: v.d, dbn, reelDbn };
+    }).sort((a, b) => a.yil.localeCompare(b.yil));
 
     if (yilListesi.length > 1) {
       const maxDbn = Math.max(...yilListesi.map(y => y.dbn));
-      html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:12px">Dm Başı Net Trendi</div>`;
-      html += `<div style="display:flex;align-items:flex-end;gap:6px;height:120px;padding-bottom:20px">`;
+      const maxD = Math.max(...yilListesi.map(y => y.d));
+
+      // Nominal + Reel Dm Başı Net bar chart yan yana
+      html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:4px">Dm Başı Net Trendi</div>`;
+      html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Nominal (yeşil) + Reel 2019 bazlı (mavi)</div>`;
+      html += `<div style="display:flex;align-items:flex-end;gap:6px;height:110px;padding-bottom:20px">`;
       yilListesi.forEach((y, i) => {
-        const h = maxDbn > 0 ? (y.dbn / maxDbn * 100) : 5;
+        const h = maxDbn > 0 ? (y.dbn / maxDbn * 90) : 5;
+        const hR = maxDbn > 0 ? (y.reelDbn / (yilListesi[0].dbn || 1) * 30) : 5; // reel bar göreceli
         const isThisYear = y.yil === String(new Date().getFullYear());
         const prevDbn = i > 0 ? yilListesi[i-1].dbn : 0;
         const ch = prevDbn > 0 ? ((y.dbn - prevDbn) / prevDbn * 100) : 0;
-        html += `<div style="flex:1;text-align:center"><div style="font-size:9px;font-weight:700;color:${isThisYear?'#4ade80':'#94a3b8'};margin-bottom:2px">${fmt(y.dbn)}</div>`;
-        if (i > 0 && ch !== 0) html += `<div style="font-size:7px;color:${ch>0?'#34d399':'#f87171'};margin-bottom:1px">${ch>0?'+':''}${ch.toFixed(0)}%</div>`;
-        html += `<div style="height:${Math.max(5,h)}px;border-radius:4px 4px 2px 2px;background:${isThisYear?'linear-gradient(to top,#22c55e,#4ade80)':'linear-gradient(to top,rgba(148,163,184,0.2),rgba(148,163,184,0.4))'};margin-bottom:4px"></div>`;
-        html += `<div style="font-size:9px;color:${isThisYear?'#4ade80':'#475569'};font-weight:${isThisYear?'700':'400'}">${y.yil.substring(2)}</div></div>`;
+        html += `<div style="flex:1;text-align:center">`;
+        html += `<div style="font-size:8px;font-weight:700;color:${isThisYear?'#4ade80':'#94a3b8'}">${fmt(y.dbn)}</div>`;
+        if (i > 0 && ch !== 0) html += `<div style="font-size:7px;color:${ch>0?'#34d399':'#f87171'}">${ch>0?'+':''}${ch.toFixed(0)}%</div>`;
+        html += `<div style="display:flex;gap:1px;justify-content:center;align-items:flex-end;margin-bottom:3px">`;
+        html += `<div style="width:45%;height:${Math.max(4,h)}px;border-radius:3px 0 0 3px;background:${isThisYear?'#4ade80':'rgba(148,163,184,0.3)'}"></div>`;
+        html += `<div style="width:45%;height:${Math.max(4,hR)}px;border-radius:0 3px 3px 0;background:rgba(96,165,250,0.4)"></div>`;
+        html += `</div>`;
+        html += `<div style="font-size:8px;color:${isThisYear?'#4ade80':'#475569'}">${y.yil.substring(2)}</div>`;
+        html += `</div>`;
       });
       html += `</div></div>`;
 
-      // Çiçek bazlı trend — accordion
-      html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:10px">🌷 Çiçek Yıllık Değişim</div>`;
-      html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Tıkla → yıl detayı</div>`;
+      // Demet hacim trendi
+      html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:4px">Demet Hacim Trendi</div>`;
+      html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Yıllık toplam satılan demet — gerçek büyüme göstergesi</div>`;
+      html += `<div style="display:flex;align-items:flex-end;gap:6px;height:80px;padding-bottom:20px">`;
+      yilListesi.forEach((y, i) => {
+        const h = maxD > 0 ? (y.d / maxD * 70) : 5;
+        const isThisYear = y.yil === String(new Date().getFullYear());
+        const prevD = i > 0 ? yilListesi[i-1].d : 0;
+        const ch = prevD > 0 ? ((y.d - prevD) / prevD * 100) : 0;
+        html += `<div style="flex:1;text-align:center">`;
+        html += `<div style="font-size:8px;font-weight:600;color:${isThisYear?'#60a5fa':'#94a3b8'}">${new Intl.NumberFormat("tr-TR").format(y.d)}</div>`;
+        if (i > 0 && ch !== 0) html += `<div style="font-size:7px;color:${ch>0?'#34d399':'#f87171'}">${ch>0?'+':''}${ch.toFixed(0)}%</div>`;
+        html += `<div style="height:${Math.max(4,h)}px;border-radius:4px 4px 2px 2px;background:${isThisYear?'linear-gradient(to top,#3b82f6,#60a5fa)':'rgba(96,165,250,0.2)'};margin-bottom:3px"></div>`;
+        html += `<div style="font-size:8px;color:#475569">${y.yil.substring(2)}</div>`;
+        html += `</div>`;
+      });
+      html += `</div></div>`;
+
+      // CAGR hesapla
+      const ilk = yilListesi[0], son = yilListesi[yilListesi.length - 1];
+      const yilFark = parseInt(son.yil) - parseInt(ilk.yil);
+      const nominalCagr = yilFark > 0 && ilk.dbn > 0 ? (Math.pow(son.dbn / ilk.dbn, 1 / yilFark) - 1) * 100 : 0;
+      const reelCagr = yilFark > 0 && ilk.reelDbn > 0 ? (Math.pow(son.reelDbn / ilk.reelDbn, 1 / yilFark) - 1) * 100 : 0;
+      const demetCagr = yilFark > 0 && ilk.d > 0 ? (Math.pow(son.d / ilk.d, 1 / yilFark) - 1) * 100 : 0;
+
+      html += `<div class="card" style="margin-bottom:14px;background:rgba(96,165,250,0.06);border-color:rgba(96,165,250,0.12)"><div style="font-size:13px;font-weight:700;color:#60a5fa;margin-bottom:8px">📊 CAGR (${ilk.yil}→${son.yil})</div>`;
+      html += `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center">`;
+      html += `<div><div style="font-size:8px;color:#64748b">Nominal Fiyat</div><div style="font-size:16px;font-weight:800;color:#4ade80">+${nominalCagr.toFixed(0)}%</div><div style="font-size:7px;color:#475569">yıllık ort</div></div>`;
+      html += `<div><div style="font-size:8px;color:#64748b">Reel Fiyat</div><div style="font-size:16px;font-weight:800;color:${reelCagr>=0?'#60a5fa':'#f87171'}">${reelCagr>=0?'+':''}${reelCagr.toFixed(0)}%</div><div style="font-size:7px;color:#475569">enflasyon düzeltmeli</div></div>`;
+      html += `<div><div style="font-size:8px;color:#64748b">Demet Hacim</div><div style="font-size:16px;font-weight:800;color:${demetCagr>=0?'#4ade80':'#f87171'}">${demetCagr>=0?'+':''}${demetCagr.toFixed(0)}%</div><div style="font-size:7px;color:#475569">yıllık ort</div></div>`;
+      html += `</div></div>`;
+
+      // Çiçek bazlı trend — accordion + yaşam döngüsü badge + Pareto
+      html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:6px">🌷 Çiçek Yıllık Değişim</div>`;
+      html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">🟢 Yükselen Yıldız · 🟡 Nakit İneği · 🔴 Düşen · ⬜ Diğer</div>`;
       const cicekYilData = {};
       ALL_DATA.forEach(r => { const y = r.t.substring(0, 4); if (!cicekYilData[r.c]) cicekYilData[r.c] = {}; if (!cicekYilData[r.c][y]) cicekYilData[r.c][y] = { net: 0, d: 0 }; cicekYilData[r.c][y].net += r.net; cicekYilData[r.c][y].d += r.d; });
       const yilKeys = yilListesi.map(y => y.yil);
       const buYilKey = String(new Date().getFullYear());
       const cicekTrendList = Object.entries(cicekYilData).map(([cicek, yillar]) => {
         const toplamD = Object.values(yillar).reduce((s, v) => s + v.d, 0);
-        const aktifYillar = Object.values(yillar).filter(v => v.d > 0).length;
+        const toplamNet = Object.values(yillar).reduce((s, v) => s + v.net, 0);
         const buYilD = yillar[buYilKey] ? yillar[buYilKey].d : 0;
-        return { cicek, yillar, toplamD, aktifYillar, buYilD };
-      }).filter(c => c.toplamD >= 50 && !c.cicek.toLowerCase().includes("saksı") && !c.cicek.toLowerCase().includes("saksi") && c.buYilD > 0).sort((a, b) => b.toplamD - a.toplamD);
+        const buYilNet = yillar[buYilKey] ? yillar[buYilKey].net : 0;
+        // Son 3 yıl trend hesapla
+        const son3 = yilKeys.slice(-3);
+        const s3vals = son3.map(y => yillar[y] && yillar[y].d > 0 ? { dbn: yillar[y].net / yillar[y].d, d: yillar[y].d } : null).filter(v => v);
+        let badge = "other", badgeLabel = "", badgeColor = "#475569";
+        if (s3vals.length >= 2) {
+          const fiyatUp = s3vals[s3vals.length-1].dbn > s3vals[0].dbn;
+          const hacimUp = s3vals[s3vals.length-1].d > s3vals[0].d;
+          const hacimYuksek = buYilD > 200;
+          if (fiyatUp && hacimUp) { badge = "star"; badgeLabel = "🟢"; badgeColor = "#4ade80"; }
+          else if (hacimYuksek && !fiyatUp) { badge = "cash"; badgeLabel = "🟡"; badgeColor = "#fbbf24"; }
+          else if (!fiyatUp && !hacimUp) { badge = "down"; badgeLabel = "🔴"; badgeColor = "#f87171"; }
+        }
+        return { cicek, yillar, toplamD, toplamNet, buYilD, buYilNet, badge, badgeLabel, badgeColor };
+      }).filter(c => c.toplamD >= 50 && !c.cicek.toLowerCase().includes("saksı") && !c.cicek.toLowerCase().includes("saksi") && c.buYilD > 0).sort((a, b) => b.toplamNet - a.toplamNet);
+
+      // Pareto hesapla — toplam gelirin %80'ini getiren çiçekleri bul
+      const toplamGelir = cicekTrendList.reduce((s, c) => s + c.buYilNet, 0);
+      let paretoToplam = 0;
+      const paretoSinir = toplamGelir * 0.80;
+      cicekTrendList.forEach((c, i) => { paretoToplam += c.buYilNet; c.isPareto = paretoToplam <= paretoSinir || i < 3; c.gelirPay = toplamGelir > 0 ? (c.buYilNet / toplamGelir * 100) : 0; });
 
       cicekTrendList.slice(0, state.expanded.trendAll ? 999 : 12).forEach((item, idx) => {
         const isOpen = state.expanded["trend_"+idx];
@@ -2601,8 +2668,10 @@ function render() {
         const lastDbn = lastYearData && lastYearData.d > 0 ? lastYearData.net / lastYearData.d : 0;
         const prevDbn = prevYearData && prevYearData.d > 0 ? prevYearData.net / prevYearData.d : 0;
         const ch = prevDbn > 0 ? ((lastDbn - prevDbn) / prevDbn * 100) : null;
-        html += `<div style="border-top:${idx>0?'1px solid rgba(255,255,255,0.03)':'none'};cursor:pointer" onclick="toggleExp('trend_${idx}')">`;
-        html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0"><div style="font-size:12px;font-weight:600;color:#e2e8f0">${esc(item.cicek)}</div><div style="display:flex;align-items:center;gap:6px"><span style="font-size:12px;font-weight:700;color:#34d399">${fmt(lastDbn)}</span>`;
+        html += `<div style="border-top:${idx>0?'1px solid rgba(255,255,255,0.03)':'none'};cursor:pointer;${item.isPareto?'':'opacity:0.6'}" onclick="toggleExp('trend_${idx}')">`;
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">`;
+        html += `<div style="display:flex;align-items:center;gap:4px"><span style="font-size:10px">${item.badgeLabel||'⬜'}</span><span style="font-size:12px;font-weight:600;color:#e2e8f0">${esc(item.cicek)}</span>${item.isPareto?'<span style="font-size:7px;color:#fbbf24;background:rgba(250,204,21,0.1);padding:1px 4px;border-radius:3px">'+item.gelirPay.toFixed(0)+'%</span>':''}</div>`;
+        html += `<div style="display:flex;align-items:center;gap:6px"><span style="font-size:12px;font-weight:700;color:#34d399">${fmt(lastDbn)}</span>`;
         if (ch != null) html += `<span style="font-size:10px;color:${ch>0?'#34d399':'#f87171'}">${ch>0?'+':''}${ch.toFixed(0)}%</span>`;
         html += `<span style="font-size:9px;color:#475569">${isOpen?'▲':'▼'}</span></div></div>`;
         if (isOpen) {
