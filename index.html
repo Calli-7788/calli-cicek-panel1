@@ -253,10 +253,18 @@ async function loadAllData() {
 
   ALL_DATA = allRecords;
   
-  // Total demet and ciro for debug
+  // Veri kalite bilgisi — global'e kaydet
   const totalDemet = ALL_DATA.reduce((s, r) => s + r.d, 0);
   const totalCiro = ALL_DATA.reduce((s, r) => s + r.ciro, 0);
   const totalNet = ALL_DATA.reduce((s, r) => s + r.net, 0);
+  window._DATA_QUALITY = {
+    toplamKayit: ALL_DATA.length,
+    toplamDemet: totalDemet,
+    toplamCiro: Math.round(totalCiro),
+    toplamNet: Math.round(totalNet),
+    sonGuncelleme: new Date().toLocaleString("tr-TR"),
+    enSonTarih: ALL_DATA.length > 0 ? ALL_DATA.reduce((mx, r) => r.t > mx ? r.t : mx, "") : ""
+  };
   DEBUG_INFO += "TOPLAM: " + ALL_DATA.length + " kayıt, " + totalDemet + " demet, " + Math.round(totalCiro) + " ciro, " + Math.round(totalNet) + " net\n";
 
   FLOWERS = [...new Set(ALL_DATA.map(r => r.c))].sort();
@@ -1091,8 +1099,24 @@ function getAlerts(filtered) {
   const result = [];
   const todayRecs = ALL_DATA.filter(r => r.t === today);
   if (todayRecs.length) {
-    const best = [...todayRecs].sort((a, b) => b.f - a.f)[0];
-    result.push({ type: "star", text: "Bugün en iyi: " + esc(best.c) + " → " + esc(best.s) + " (" + fmt(best.f) + ")" });
+    // Çiçek×şube bazında grupla
+    const kombo = {};
+    todayRecs.forEach(r => {
+      const key = r.c + "→" + r.s;
+      if (!kombo[key]) kombo[key] = { c: r.c, s: r.s, net: 0, d: 0 };
+      kombo[key].net += r.net; kombo[key].d += r.d;
+    });
+    const list = Object.values(kombo).filter(k => k.d >= 5); // min 5 demet eşiği
+    if (list.length > 0) {
+      // En yüksek dm başı net
+      const bestDbn = [...list].sort((a,b) => (b.net/b.d) - (a.net/a.d))[0];
+      result.push({ type: "star", text: "Dm başı en iyi: " + esc(bestDbn.c) + " → " + esc(bestDbn.s) + " (" + fmt(bestDbn.net/bestDbn.d) + "/dm)" });
+      // En yüksek toplam net
+      const bestNet = [...list].sort((a,b) => b.net - a.net)[0];
+      if (bestNet.c !== bestDbn.c || bestNet.s !== bestDbn.s) {
+        result.push({ type: "up", text: "Toplam en iyi: " + esc(bestNet.c) + " → " + esc(bestNet.s) + " (" + fmt(bestNet.net) + ")" });
+      }
+    }
   }
   return result.slice(0, 4);
 }
@@ -1104,10 +1128,26 @@ function getBranchComp(filtered) {
     if (!m[r.c][r.s]) m[r.c][r.s] = { ciro: 0, net: 0, d: 0 };
     m[r.c][r.s].ciro += r.ciro; m[r.c][r.s].net += r.net; m[r.c][r.s].d += r.d;
   });
-  return Object.entries(m).map(([flower, branches]) => ({
-    flower,
-    branches: Object.entries(branches).map(([n, v]) => ({ name: n, ...v, avgP: v.d > 0 ? v.ciro / v.d : 0 })).sort((a, b) => b.avgP - a.avgP)
-  })).sort((a, b) => Math.max(...b.branches.map(x => x.avgP)) - Math.max(...a.branches.map(x => x.avgP)));
+  // Son 14 gün trend için
+  const son14 = new Date(); son14.setDate(son14.getDate() - 14);
+  const son14str = son14.toISOString().split("T")[0];
+  const son7 = new Date(); son7.setDate(son7.getDate() - 7);
+  const son7str = son7.toISOString().split("T")[0];
+
+  return Object.entries(m).map(([flower, branches]) => {
+    const brList = Object.entries(branches).map(([n, v]) => {
+      const dbn = v.d > 0 ? v.net / v.d : 0;
+      // Trend: son 7 gün vs önceki 7 gün
+      const r1 = ALL_DATA.filter(r => r.c === flower && r.s === n && r.t >= son14str && r.t < son7str);
+      const r2 = ALL_DATA.filter(r => r.c === flower && r.s === n && r.t >= son7str);
+      const d1 = r1.reduce((s,r)=>s+r.d,0) > 0 ? r1.reduce((s,r)=>s+r.net,0)/r1.reduce((s,r)=>s+r.d,0) : 0;
+      const d2 = r2.reduce((s,r)=>s+r.d,0) > 0 ? r2.reduce((s,r)=>s+r.net,0)/r2.reduce((s,r)=>s+r.d,0) : 0;
+      const trend = d1 > 0 ? ((d2 - d1) / d1 * 100) : 0;
+      return { name: n, ...v, dbn, avgP: v.d > 0 ? v.ciro / v.d : 0, trend };
+    }).sort((a, b) => b.dbn - a.dbn);
+    const toplamD = brList.reduce((s,b) => s+b.d, 0);
+    return { flower, branches: brList, totalD: toplamD, branchCount: brList.length };
+  }).sort((a, b) => b.totalD - a.totalD);
 }
 
 function getHeatData(filtered) {
@@ -1392,12 +1432,36 @@ function render() {
       html += `</div></div>`;
     }
 
+    // Önceki mezat dönemi hesapla (değişim yüzdeleri için)
+    const prevMezatData = (function(){
+      const dates = [...new Set(ALL_DATA.filter(r => r.t < state.sd).map(r => r.t))].sort().reverse();
+      const gunSayisi = [...new Set(filtered.map(r => r.t))].length;
+      const prevDates = dates.slice(0, Math.max(gunSayisi, 1));
+      if (prevDates.length === 0) return null;
+      const pd = ALL_DATA.filter(r => prevDates.includes(r.t));
+      const pNet = pd.reduce((s,r) => s+r.net, 0);
+      const pD = pd.reduce((s,r) => s+r.d, 0);
+      return { net: pNet, d: pD, dbn: pD > 0 ? pNet / pD : 0, ciro: pd.reduce((s,r) => s+r.ciro, 0) };
+    })();
+    const pChNet = prevMezatData && prevMezatData.net > 0 ? ((stats.tn - prevMezatData.net) / prevMezatData.net * 100) : null;
+    const pChDbn = prevMezatData && prevMezatData.dbn > 0 ? ((stats.av - prevMezatData.dbn) / prevMezatData.dbn * 100) : null;
+    const pChD = prevMezatData && prevMezatData.d > 0 ? ((stats.td - prevMezatData.d) / prevMezatData.d * 100) : null;
+
     html += `<div class="grid-2" style="margin-bottom:6px">`;
-    html += `<div class="card card-green"><div class="lbl">Ciro</div><div class="val-big" style="color:#4ade80">${fmt(stats.tc)}</div>${stats.cc!=null?'<div style="margin-top:4px">'+trendHTML(stats.cc)+'</div>':''}</div>`;
-    html += `<div class="card"><div class="lbl">Net Gelir</div><div class="val-big" style="color:#f8fafc">${fmt(stats.tn)}</div></div>`;
-    html += `<div class="card"><div class="lbl">Demet</div><div class="val-big" style="color:#f8fafc">${stats.td}</div></div>`;
-    html += `<div class="card"><div class="lbl">Ort. Fiyat</div><div class="val-big" style="color:#f8fafc">${fmt2(stats.av)}</div></div>`;
+    html += `<div class="card card-green"><div class="lbl">Net Gelir</div><div class="val-big" style="color:#4ade80">${fmt(stats.tn)}</div>${pChNet!=null?'<div style="font-size:10px;color:'+(pChNet>=0?'#34d399':'#f87171')+'">önceki: '+(pChNet>=0?'+':'')+pChNet.toFixed(0)+'%</div>':''}</div>`;
+    html += `<div class="card"><div class="lbl">Dm Başı Net</div><div class="val-big" style="color:#f8fafc">${fmt2(stats.av)}</div>${pChDbn!=null?'<div style="font-size:10px;color:'+(pChDbn>=0?'#34d399':'#f87171')+'">önceki: '+(pChDbn>=0?'+':'')+pChDbn.toFixed(0)+'%</div>':''}</div>`;
+    html += `<div class="card"><div class="lbl">Demet</div><div class="val-big" style="color:#f8fafc">${stats.td}</div>${pChD!=null?'<div style="font-size:10px;color:'+(pChD>=0?'#34d399':'#f87171')+'">önceki: '+(pChD>=0?'+':'')+pChD.toFixed(0)+'%</div>':''}</div>`;
+    html += `<div class="card"><div class="lbl">Brüt Ciro</div><div class="val-big" style="color:#94a3b8">${fmt(stats.tc)}</div></div>`;
     html += `</div>`;
+
+    // Veri kalite göstergesi
+    if (window._DATA_QUALITY) {
+      const dq = window._DATA_QUALITY;
+      html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 6px;margin-bottom:8px;border-radius:6px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04)">`;
+      html += `<div style="font-size:8px;color:#475569">${new Intl.NumberFormat("tr-TR").format(dq.toplamKayit)} kayıt · ${new Intl.NumberFormat("tr-TR").format(dq.toplamDemet)} dm · Son veri: ${dq.enSonTarih}</div>`;
+      html += `<div style="font-size:8px;color:#475569">↻ ${dq.sonGuncelleme}</div>`;
+      html += `</div>`;
+    }
 
     if (stats.dl.length > 1) {
       const mx = Math.max(...stats.dl.map(x => x.ciro));
@@ -1413,7 +1477,8 @@ function render() {
       html += `<div class="sec-title">Çiçek Grubu</div>`;
       html += `<div class="grp-grid" style="grid-template-columns:repeat(${Math.min(stats.grpList.length,4)},1fr)">`;
       stats.grpList.forEach(g => {
-        html += `<div class="card grp-card" onclick="setState({sf:'GRUP:${esc(g.name)}',fo:true})"><div style="font-size:11px;font-weight:600;color:#f8fafc;margin-bottom:4px">${esc(g.name)}</div><div style="font-size:14px;font-weight:800;color:#34d399">${fmt(g.net)}</div><div style="font-size:10px;color:#64748b;margin-top:2px">${g.d} dm</div></div>`;
+        const payPct = stats.tn > 0 ? (g.net / stats.tn * 100) : 0;
+        html += `<div class="card grp-card" onclick="setState({sf:'GRUP:${esc(g.name)}',fo:true})"><div style="font-size:11px;font-weight:600;color:#f8fafc;margin-bottom:4px">${esc(g.name)}</div><div style="font-size:14px;font-weight:800;color:#34d399">${fmt(g.net)}</div><div style="font-size:10px;color:#64748b;margin-top:2px">${g.d} dm · <span style="color:#fbbf24">%${payPct.toFixed(0)}</span></div></div>`;
       });
       html += `</div>`;
     }
@@ -1661,7 +1726,7 @@ function render() {
   // ══ ŞUBE TABLOSU ══
   if (state.tab === "sube") {
     html += `<div class="sec-title">Şube Performans Karşılaştırması</div>`;
-    html += `<div style="font-size:12px;color:#94a3b8;margin-bottom:14px;margin-top:-6px">Tüm şubeleri yan yana karşılaştır</div>`;
+    html += `<div style="font-size:12px;color:#94a3b8;margin-bottom:14px;margin-top:-6px">Tüm şubeleri yan yana karşılaştır · Önceki döneme göre değişim dahil</div>`;
 
     // Build branch performance data
     const brPerf = {};
@@ -1678,47 +1743,64 @@ function render() {
       avgP: v.d > 0 ? v.ciro / v.d : 0,
     })).sort((a, b) => b.net - a.net);
 
+    // Önceki dönem hesapla (delta için)
+    const prevBrPerf = {};
+    const filteredDates = [...new Set(filtered.map(r => r.t))].sort();
+    const gunSayisiSube = filteredDates.length;
+    const prevDatesAll = [...new Set(ALL_DATA.filter(r => r.t < (filteredDates[0]||state.sd)).map(r => r.t))].sort().reverse().slice(0, Math.max(gunSayisiSube, 1));
+    ALL_DATA.filter(r => prevDatesAll.includes(r.t)).forEach(r => {
+      if (!prevBrPerf[r.s]) prevBrPerf[r.s] = { net: 0, d: 0 };
+      prevBrPerf[r.s].net += r.net; prevBrPerf[r.s].d += r.d;
+    });
+
     const topNet = brList[0]?.net || 1;
+    const totalNet = brList.reduce((s, b) => s + b.net, 0);
+    const totalDm = brList.reduce((s, b) => s + b.d, 0);
 
     // Table header
     html += `<div class="card" style="padding:0;overflow:hidden;overflow-x:auto">`;
-    html += `<table style="width:100%;border-collapse:collapse;font-size:11px;min-width:380px">`;
+    html += `<table style="width:100%;border-collapse:collapse;font-size:11px;min-width:420px">`;
     html += `<thead><tr style="border-bottom:1px solid rgba(255,255,255,0.08)">`;
-    html += `<th style="padding:10px 8px;text-align:left;color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:0.5px;font-weight:600">Şube</th>`;
-    html += `<th style="padding:10px 8px;text-align:right;color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:0.5px;font-weight:600">Net Gelir</th>`;
-    html += `<th style="padding:10px 8px;text-align:right;color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:0.5px;font-weight:600">Demet</th>`;
-    html += `<th style="padding:10px 8px;text-align:right;color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:0.5px;font-weight:600">Dm Başı Net</th>`;
-    html += `<th style="padding:10px 8px;text-align:right;color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:0.5px;font-weight:600">Pay</th>`;
+    html += `<th style="padding:10px 6px;text-align:left;color:#64748b;font-size:9px;text-transform:uppercase;font-weight:600">Şube</th>`;
+    html += `<th style="padding:10px 6px;text-align:right;color:#64748b;font-size:9px;text-transform:uppercase;font-weight:600">Net Gelir</th>`;
+    html += `<th style="padding:10px 6px;text-align:right;color:#64748b;font-size:9px;text-transform:uppercase;font-weight:600">Dm Başı</th>`;
+    html += `<th style="padding:10px 6px;text-align:right;color:#64748b;font-size:9px;text-transform:uppercase;font-weight:600">Demet</th>`;
+    html += `<th style="padding:10px 4px;text-align:right;color:#64748b;font-size:9px;text-transform:uppercase;font-weight:600">Pay</th>`;
+    html += `<th style="padding:10px 4px;text-align:right;color:#64748b;font-size:9px;text-transform:uppercase;font-weight:600">Δ</th>`;
     html += `</tr></thead><tbody>`;
-
-    const totalNet = brList.reduce((s, b) => s + b.net, 0);
 
     brList.forEach((b, i) => {
       const pct = totalNet > 0 ? (b.net / totalNet * 100) : 0;
       const barW = topNet > 0 ? (b.net / topNet * 100) : 0;
       const rowBg = i === 0 ? "rgba(34,197,94,0.06)" : i % 2 === 0 ? "rgba(255,255,255,0.02)" : "transparent";
+      // Önceki dönem delta
+      const prev = prevBrPerf[b.name];
+      const prevNet = prev ? prev.net : 0;
+      const prevDbn = prev && prev.d > 0 ? prev.net / prev.d : 0;
+      const chNet = prevNet > 0 ? ((b.net - prevNet) / prevNet * 100) : null;
       html += `<tr style="border-bottom:1px solid rgba(255,255,255,0.03);background:${rowBg}">`;
-      html += `<td style="padding:10px 8px;color:#f8fafc;font-weight:${i===0?'600':'500'}">${i===0?'🏆 ':''}${esc(b.name)}</td>`;
-      html += `<td style="padding:10px 8px;text-align:right"><div style="color:#34d399;font-weight:600">${fmt(b.net)}</div><div style="height:3px;background:rgba(255,255,255,0.04);border-radius:2px;margin-top:3px"><div style="height:100%;border-radius:2px;width:${barW}%;background:#22c55e"></div></div></td>`;
-      html += `<td style="padding:10px 8px;text-align:right;color:#cbd5e1">${b.d}</td>`;
-      html += `<td style="padding:10px 8px;text-align:right;color:#e2e8f0;font-weight:600">${fmt(b.dbn)}</td>`;
-      html += `<td style="padding:10px 8px;text-align:right;color:#94a3b8">${pct.toFixed(1)}%</td>`;
+      html += `<td style="padding:8px 6px;color:#f8fafc;font-weight:${i===0?'600':'500'}">${i===0?'🏆 ':''}${esc(b.name)}</td>`;
+      html += `<td style="padding:8px 6px;text-align:right"><div style="color:#34d399;font-weight:600">${fmt(b.net)}</div><div style="height:3px;background:rgba(255,255,255,0.04);border-radius:2px;margin-top:2px"><div style="height:100%;border-radius:2px;width:${barW}%;background:#22c55e"></div></div></td>`;
+      html += `<td style="padding:8px 6px;text-align:right;color:#e2e8f0;font-weight:600">${fmt(b.dbn)}</td>`;
+      html += `<td style="padding:8px 6px;text-align:right;color:#cbd5e1">${b.d}</td>`;
+      html += `<td style="padding:8px 4px;text-align:right;color:#94a3b8;font-size:10px">${pct.toFixed(0)}%</td>`;
+      html += `<td style="padding:8px 4px;text-align:right;font-size:10px;color:${chNet!==null?(chNet>=0?'#34d399':'#f87171'):'#475569'}">${chNet!==null?(chNet>=0?'+':'')+chNet.toFixed(0)+'%':'—'}</td>`;
       html += `</tr>`;
     });
 
     // Totals row
-    const totalDbn = brList.reduce((s, b) => s + b.d, 0);
     html += `<tr style="border-top:2px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.03)">`;
-    html += `<td style="padding:10px 8px;color:#f8fafc;font-weight:700">TOPLAM</td>`;
-    html += `<td style="padding:10px 8px;text-align:right;color:#4ade80;font-weight:700">${fmt(totalNet)}</td>`;
-    html += `<td style="padding:10px 8px;text-align:right;color:#f8fafc;font-weight:700">${totalDbn}</td>`;
-    html += `<td style="padding:10px 8px;text-align:right;color:#f8fafc;font-weight:700">${totalDbn > 0 ? fmt(totalNet / totalDbn) : '—'}</td>`;
-    html += `<td style="padding:10px 8px;text-align:right;color:#f8fafc;font-weight:700">100%</td>`;
+    html += `<td style="padding:10px 6px;color:#f8fafc;font-weight:700">TOPLAM</td>`;
+    html += `<td style="padding:10px 6px;text-align:right;color:#4ade80;font-weight:700">${fmt(totalNet)}</td>`;
+    html += `<td style="padding:10px 6px;text-align:right;color:#f8fafc;font-weight:700">${totalDm > 0 ? fmt(totalNet / totalDm) : '—'}</td>`;
+    html += `<td style="padding:10px 6px;text-align:right;color:#f8fafc;font-weight:700">${totalDm}</td>`;
+    html += `<td style="padding:10px 4px;text-align:right;color:#f8fafc;font-weight:700">100%</td>`;
+    html += `<td></td>`;
     html += `</tr>`;
 
     html += `</tbody></table></div>`;
 
-    // Per-branch flower breakdown
+    // Per-branch flower breakdown — pay % + güven uyarısı eklendi
     html += `<div class="sec-title" style="margin-top:20px">Şube × Çiçek Detayı</div>`;
     const brFlower = {};
     filtered.forEach(r => {
@@ -1731,14 +1813,20 @@ function render() {
 
     brList.slice(0, state.expanded.subeDetail ? 999 : 5).forEach((b, i) => {
       const flowers = brFlower[b.name] || {};
-      const fList = Object.entries(flowers).map(([n, v]) => ({ name: n, ...v, dbn: v.d > 0 ? v.net / v.d : 0 })).sort((a, b) => b.dbn - a.dbn);
+      const fList = Object.entries(flowers).map(([n, v]) => ({ name: n, ...v, dbn: v.d > 0 ? v.net / v.d : 0 })).sort((a, bb) => bb.dbn - a.dbn);
+      const subeToplamNet = fList.reduce((s, fl) => s + fl.net, 0);
 
       html += `<div class="card" style="margin-bottom:8px;padding:12px 14px">`;
-      html += `<div style="font-size:13px;font-weight:600;color:#f8fafc;margin-bottom:8px">${esc(b.name)}</div>`;
+      html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">`;
+      html += `<div style="font-size:13px;font-weight:600;color:#f8fafc">${esc(b.name)}</div>`;
+      html += `<div style="font-size:9px;color:#64748b">${fList.length} çiçek · ${b.records} kayıt</div>`;
+      html += `</div>`;
       fList.slice(0, 5).forEach((fl, j) => {
+        const flPay = subeToplamNet > 0 ? (fl.net / subeToplamNet * 100) : 0;
+        const guvenUyari = fl.d < 5 ? ' <span style="color:#f87171;font-size:8px">⚠ az örnek</span>' : fl.d < 15 ? ' <span style="color:#fbbf24;font-size:8px">◐ orta</span>' : '';
         html += `<div style="display:flex;justify-content:space-between;padding:4px 0;border-top:${j>0?'1px solid rgba(255,255,255,0.03)':'none'}">`;
-        html += `<span style="font-size:11px;color:#cbd5e1">${esc(fl.name)}</span>`;
-        html += `<span style="font-size:11px"><span style="color:#64748b">${fl.d}dm</span> · <span style="color:#34d399;font-weight:600">${fmt(fl.dbn)}/dm</span></span>`;
+        html += `<span style="font-size:11px;color:#cbd5e1">${esc(fl.name)}${guvenUyari}</span>`;
+        html += `<span style="font-size:11px"><span style="color:#fbbf24;font-size:9px">%${flPay.toFixed(0)}</span> · <span style="color:#64748b">${fl.d}dm</span> · <span style="color:#34d399;font-weight:600">${fmt(fl.dbn)}/dm</span></span>`;
         html += `</div>`;
       });
       if (fList.length > 5) html += `<div style="font-size:10px;color:#475569;padding-top:4px">+${fList.length - 5} çiçek daha</div>`;
@@ -1750,21 +1838,67 @@ function render() {
   // ══ KARŞILAŞTIR ══
   if (state.tab === "compare") {
     const bc = getBranchComp(filtered);
+    // 2+ şubeli ve tek şubeli ayır
+    const bcMulti = bc.filter(item => item.branchCount >= 2);
+    const bcSingle = bc.filter(item => item.branchCount < 2);
+
     html += `<div class="sec-title">Aynı Çiçek — Farklı Şubeler</div>`;
-    html += `<div style="font-size:12px;color:#94a3b8;margin-bottom:14px;margin-top:-6px">En iyi fiyat veren şubeyi bul</div>`;
+    html += `<div style="font-size:12px;color:#94a3b8;margin-bottom:14px;margin-top:-6px">Dm başı net karşılaştırma · Fiyat farkı + karar etkisi · Güven seviyesi</div>`;
     const compShow = state.expanded.comp ? 999 : 5;
-    bc.slice(0, compShow).forEach((item, i) => {
-      const mx = item.branches[0]?.avgP || 1;
+    bcMulti.slice(0, compShow).forEach((item, i) => {
+      const best = item.branches[0];
+      const worst = item.branches[item.branches.length - 1];
+      const mx = best?.dbn || 1;
+      const fark = best && worst ? (best.dbn - worst.dbn) : 0;
+      const kararEtkisi = fark * item.totalD;
       const show = state.expanded["comp_"+i] ? 999 : 5;
-      html += `<div class="card" style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="font-size:13px;font-weight:700;color:#f8fafc">${esc(item.flower)}</div><div style="font-size:10px;color:#34d399">${item.branches.length} şube</div></div>`;
+
+      html += `<div class="card" style="margin-bottom:12px">`;
+      // Başlık + fiyat farkı + karar etkisi
+      html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"><div style="font-size:13px;font-weight:700;color:#f8fafc">${esc(item.flower)}</div><div style="font-size:10px;color:#34d399">${item.branchCount} şube · ${item.totalD}dm</div></div>`;
+      if (fark > 0 && item.branches.length >= 2) {
+        html += `<div style="display:flex;gap:10px;margin-bottom:8px;font-size:10px">`;
+        html += `<span style="color:#fbbf24">Fark: ${fmt(fark)}/dm</span>`;
+        html += `<span style="color:#c4b5fd">Karar etkisi: ~${fmt(kararEtkisi)}</span>`;
+        html += `</div>`;
+      }
+      // Şube satırları
       item.branches.slice(0, show).forEach((b, j) => {
-        const w = (b.avgP / mx) * 100;
-        html += `<div class="comp-bar" style="border-top:${j>0?'1px solid rgba(255,255,255,0.03)':'none'}"><div style="width:60px;font-size:11px;color:${j===0?'#34d399':'#94a3b8'};font-weight:${j===0?600:400}">${esc(b.name)}</div><div class="comp-bar-fill"><div class="comp-bar-inner" style="width:${w}%;background:${j===0?'linear-gradient(90deg,#22c55e,#34d399)':'rgba(148,163,184,0.25)'}"></div></div><div style="width:55px;text-align:right;font-size:12px;font-weight:700;color:${j===0?'#34d399':'#cbd5e1'}">${fmt(b.avgP)}</div><div style="width:30px;text-align:right;font-size:9px;color:#64748b">${b.d}dm</div></div>`;
+        const w = mx > 0 ? (b.dbn / mx * 100) : 0;
+        const isBest = j === 0;
+        // Güven etiketi
+        const guvenTxt = b.d < 5 ? '<span style="color:#f87171;font-size:7px"> ⚠az</span>' : b.d < 15 ? '<span style="color:#fbbf24;font-size:7px"> ◐</span>' : '';
+        // Trend ok
+        const trendOk = b.trend > 5 ? '<span style="color:#34d399;font-size:8px">↑</span>' : b.trend < -5 ? '<span style="color:#f87171;font-size:8px">↓</span>' : '<span style="color:#475569;font-size:8px">→</span>';
+        html += `<div style="display:flex;align-items:center;gap:4px;padding:4px 0;border-top:${j>0?'1px solid rgba(255,255,255,0.03)':'none'}">`;
+        html += `<div style="width:55px;font-size:10px;color:${isBest?'#34d399':'#94a3b8'};font-weight:${isBest?600:400};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(b.name)}</div>`;
+        html += `<div style="flex:1;height:5px;background:rgba(255,255,255,0.04);border-radius:3px"><div style="height:100%;border-radius:3px;width:${w}%;background:${isBest?'linear-gradient(90deg,#22c55e,#34d399)':'rgba(148,163,184,0.25)'}"></div></div>`;
+        html += `<div style="width:50px;text-align:right;font-size:12px;font-weight:700;color:${isBest?'#34d399':'#cbd5e1'}">${fmt(b.dbn)}</div>`;
+        html += `<div style="width:35px;text-align:right;font-size:9px;color:#64748b">${b.d}dm${guvenTxt}</div>`;
+        html += `<div style="width:12px;text-align:center">${trendOk}</div>`;
+        html += `</div>`;
       });
-      if (item.branches.length > 5) html += `<button style="margin-top:6px;background:none;border:none;color:#64748b;font-size:10px;cursor:pointer" onclick="toggleExp('comp_${i}')">${state.expanded["comp_"+i]?"Daha az":"+"+(item.branches.length-5)+" şube daha"}</button>`;
+      if (item.branches.length > 5) html += `<button style="margin-top:4px;background:none;border:none;color:#64748b;font-size:10px;cursor:pointer" onclick="toggleExp('comp_${i}')">${state.expanded["comp_"+i]?"Daha az":"+"+(item.branches.length-5)+" şube daha"}</button>`;
       html += `</div>`;
     });
-    if (bc.length > 5) html += `<button class="show-more" onclick="toggleExp('comp')">${state.expanded.comp?'Daha az ▲':'Tüm çiçekler ('+bc.length+') ▼'}</button>`;
+    if (bcMulti.length > 5) html += `<button class="show-more" onclick="toggleExp('comp')">${state.expanded.comp?'Daha az ▲':'Tüm çiçekler ('+bcMulti.length+') ▼'}</button>`;
+
+    // Tek şubeli ürünler — ayrı bölüm
+    if (bcSingle.length > 0) {
+      html += `<div class="sec-title" style="margin-top:16px;color:#475569">Tek Şubeli Ürünler</div>`;
+      html += `<div style="font-size:10px;color:#475569;margin-bottom:8px;margin-top:-6px">Karşılaştırma için yeterli şube verisi yok</div>`;
+      html += `<div class="card" style="padding:10px">`;
+      bcSingle.slice(0, state.expanded.compSingle ? 999 : 5).forEach((item, j) => {
+        const b = item.branches[0];
+        if (!b) return;
+        html += `<div style="display:flex;justify-content:space-between;padding:3px 0;border-top:${j>0?'1px solid rgba(255,255,255,0.03)':'none'};font-size:10px">`;
+        html += `<span style="color:#64748b">${esc(item.flower)}</span>`;
+        html += `<span style="color:#475569">${esc(b.name)} · ${b.d}dm · ${fmt(b.dbn)}/dm</span>`;
+        html += `</div>`;
+      });
+      if (bcSingle.length > 5) html += `<button style="margin-top:4px;background:none;border:none;color:#475569;font-size:9px;cursor:pointer" onclick="toggleExp('compSingle')">${state.expanded.compSingle?'Daha az':'+'+(bcSingle.length-5)+' ürün daha'}</button>`;
+      html += `</div>`;
+    }
   }
 
   // ══ KAR HARİTASI ══
@@ -3258,9 +3392,55 @@ async function handlePlan() {
       var last2Data = last2ByBranch[e[0]];
       var last2Dbn = last2Data && last2Data.d > 0 ? last2Data.net / last2Data.d : null;
 
+      // Son 6-8 mezat fiyatı (orta vade)
+      var midDates = uniqueDates.slice(0, Math.min(8, uniqueDates.length));
+      var midData = flowerRecent.filter(function(r){ return midDates.includes(r.t) && r.s === e[0] });
+      var midDbn = midData.reduce(function(s,r){return s+r.d},0) > 0 ? midData.reduce(function(s,r){return s+r.net},0) / midData.reduce(function(s,r){return s+r.d},0) : null;
+
       // 2025 data
       var hist = branch2025[e[0]];
       var histDbn = hist && hist.d > 0 ? hist.net / hist.d : 0;
+
+      // ── ÇOK KATMANLI FİLTRE SKORU ──
+      // %45 son 2 mezat + %25 son 6-8 mezat + %20 genel ortalama + %10 mevsimsellik
+      var skorDbn = 0;
+      var skorAgirliktoplam = 0;
+      if (last2Dbn !== null && last2Dbn > 0) { skorDbn += last2Dbn * 0.45; skorAgirliktoplam += 0.45; }
+      if (midDbn !== null && midDbn > 0) { skorDbn += midDbn * 0.25; skorAgirliktoplam += 0.25; }
+      if (avgDbn > 0) { skorDbn += avgDbn * 0.20; skorAgirliktoplam += 0.20; }
+      if (histDbn > 0) { skorDbn += histDbn * 0.10; skorAgirliktoplam += 0.10; }
+      var filtreSkoru = skorAgirliktoplam > 0 ? skorDbn / skorAgirliktoplam : avgDbn;
+
+      // ── ŞUBE ABSORPSİYON LİMİTİ ──
+      // Bu çiçek × bu şube tarihsel demet kapasitesi
+      var komboData = ALL_DATA.filter(function(r){ return r.c === pf.name && r.s === e[0] });
+      var komboGunluk = {};
+      komboData.forEach(function(r){ if(!komboGunluk[r.t]) komboGunluk[r.t] = 0; komboGunluk[r.t] += r.d; });
+      var komboVals = Object.values(komboGunluk).sort(function(a,b){return a-b});
+      var absMedian = komboVals.length > 0 ? komboVals[Math.floor(komboVals.length/2)] : 0;
+      var absP75 = komboVals.length >= 4 ? komboVals[Math.floor(komboVals.length * 0.75)] : absMedian;
+      var absMax = komboVals.length > 0 ? komboVals[komboVals.length-1] : 0;
+      var absSon60 = komboData.filter(function(r){ var d60=new Date(); d60.setDate(d60.getDate()-60); return r.t >= d60.toISOString().split("T")[0]; });
+      var absAlimSayisi = new Set(absSon60.map(function(r){return r.t})).size;
+
+      // ── GÜVEN SKORU ──
+      var ornekSayisi = komboVals.length;
+      var sonSatis = komboData.length > 0 ? komboData.reduce(function(mx,r){return r.t>mx?r.t:mx},"") : "";
+      var guncellik = 0;
+      if (sonSatis) { var gunFark = Math.round((new Date() - new Date(sonSatis+"T00:00:00")) / 864e5); guncellik = Math.max(0, 100 - gunFark * 2); }
+      var oynaklık = 0;
+      if (komboVals.length >= 3) {
+        var kFiyatlar = komboData.filter(function(r){return r.d>0}).map(function(r){return r.net/r.d});
+        var kOrt = kFiyatlar.reduce(function(s,x){return s+x},0) / kFiyatlar.length;
+        var kStd = Math.sqrt(kFiyatlar.reduce(function(s,x){return s+Math.pow(x-kOrt,2)},0) / kFiyatlar.length);
+        oynaklık = kOrt > 0 ? Math.max(0, 100 - (kStd/kOrt*100)*2) : 0;
+      }
+      var guvenSkor = Math.round(
+        Math.min(100, ornekSayisi * 3) * 0.30 +
+        guncellik * 0.35 +
+        oynaklık * 0.35
+      );
+      var guvenLabel = guvenSkor >= 70 ? "Yüksek" : guvenSkor >= 40 ? "Orta" : "Düşük";
 
       // DURUM ETİKETİ BELİRLE — Stratejiye göre farklı eşikler
       var azaltEsik, gondermeEsik;
@@ -3278,17 +3458,17 @@ async function handlePlan() {
       var status = "GÖNDER";
       var statusReason = "";
 
-      if (last2Dbn !== null && genelOrtalama > 0) {
-        var fark = ((last2Dbn - genelOrtalama) / genelOrtalama * 100);
+      // Çok katmanlı skor ile filtrele (eskisi: sadece son 2 mezat)
+      if (filtreSkoru > 0 && genelOrtalama > 0) {
+        var fark = ((filtreSkoru - genelOrtalama) / genelOrtalama * 100);
         if (fark < gondermeEsik) {
           status = "GÖNDERME";
-          statusReason = "Son 2 mezat ortalamanın %" + Math.abs(fark).toFixed(0) + " altında (eşik: %" + Math.abs(gondermeEsik) + ")";
+          statusReason = "Filtre skoru ortalamanın %" + Math.abs(fark).toFixed(0) + " altında (eşik: %" + Math.abs(gondermeEsik) + ")";
         } else if (fark < azaltEsik) {
           status = "AZALT";
-          statusReason = "Son 2 mezat ortalamanın %" + Math.abs(fark).toFixed(0) + " altında (eşik: %" + Math.abs(azaltEsik) + "), demet yarıya düşür";
+          statusReason = "Filtre skoru ortalamanın %" + Math.abs(fark).toFixed(0) + " altında (eşik: %" + Math.abs(azaltEsik) + "), demet yarıya düşür";
         }
-      } else if (last2Dbn === null) {
-        // Son 2 mezat verisi yok → genel ortalamaya bak
+      } else if (last2Dbn === null && midDbn === null) {
         if (avgDbn > 0 && genelOrtalama > 0) {
           var genelFark = ((avgDbn - genelOrtalama) / genelOrtalama * 100);
           if (genelFark < gondermeEsik) {
@@ -3299,10 +3479,10 @@ async function handlePlan() {
             statusReason = "Genel ortalama düşük";
           }
         }
-        statusReason += (statusReason ? " | " : "") + "Son 2 mezat verisi yok, genel ortalamaya bakıldı";
+        statusReason += (statusReason ? " | " : "") + "Yakın dönem verisi yok, genel ortalamaya bakıldı";
       }
 
-      return {name:e[0], dbn:avgDbn, d:e[1].d, trend:trendPct, histDbn:histDbn, last2Dbn:last2Dbn, status:status, statusReason:statusReason};
+      return {name:e[0], dbn:avgDbn, d:e[1].d, trend:trendPct, histDbn:histDbn, last2Dbn:last2Dbn, midDbn:midDbn, filtreSkoru:filtreSkoru, status:status, statusReason:statusReason, absMedian:absMedian, absP75:absP75, absMax:absMax, absAlimSayisi:absAlimSayisi, guvenSkor:guvenSkor, guvenLabel:guvenLabel};
     }).sort(function(a,b){ return b.dbn - a.dbn });
 
     // Build info string
@@ -3326,7 +3506,7 @@ async function handlePlan() {
         if (b.status === "AZALT") sugPct = Math.round(sugPct * 0.5); // Azalt → yarıya düşür
       }
 
-      trendInfo += "\n    " + statusIcon + " " + b.name + ": " + fmt(b.dbn) + "/dm (trend:" + trendDir + (b.trend>0?"+":"") + b.trend.toFixed(0) + "%" + last2Note + histNote + ")";
+      trendInfo += "\n    " + statusIcon + " " + b.name + ": " + fmt(b.dbn) + "/dm (trend:" + trendDir + (b.trend>0?"+":"") + b.trend.toFixed(0) + "%" + last2Note + histNote + ") | Güven:" + b.guvenLabel + " | Absorpsiyon: median=" + b.absMedian + "dm, P75=" + b.absP75 + "dm, max=" + b.absMax + "dm, son60gün=" + b.absAlimSayisi + "alım";
       if (b.status === "GÖNDERME") trendInfo += " → ❌ GÖNDERME: " + b.statusReason;
       else if (b.status === "AZALT") trendInfo += " → ⚠️ AZALT (%" + sugPct + "): " + b.statusReason;
       else trendInfo += " → ÖNERİ: %" + sugPct;
@@ -3618,13 +3798,19 @@ async function handlePlan() {
         var last2D = last2Records.reduce(function(s,r){return s+r.d},0);
         var last2Dbn = last2D > 0 ? last2Net / last2D : null;
 
-        // Trend düzeltmeli fiyat: %70 son 2 mezat + %30 genel ortalama
+        // Çok katmanlı trend düzeltmeli fiyat: %45 son2 + %25 son6-8 + %20 genel + %10 2025
+        var midBrData = flowerRecent.filter(function(r){ return r.s === e[0] });
+        var midBrDbn = midBrData.reduce(function(s,r){return s+r.d},0) > 0 ? midBrData.reduce(function(s,r){return s+r.net},0) / midBrData.reduce(function(s,r){return s+r.d},0) : null;
+        var histBrData = ALL_DATA.filter(function(r){ return r.c === pf.name && r.s === e[0] && r.t.startsWith("2025") });
+        var histBrDbn = histBrData.reduce(function(s,r){return s+r.d},0) > 0 ? histBrData.reduce(function(s,r){return s+r.net},0) / histBrData.reduce(function(s,r){return s+r.d},0) : 0;
+
         var trendAdjustedPrice;
-        if (last2Dbn !== null && last2Dbn > 0) {
-          trendAdjustedPrice = last2Dbn * 0.7 + avgDbn * 0.3;
-        } else {
-          trendAdjustedPrice = avgDbn; // Son 2 mezat yoksa ortalamayı kullan
-        }
+        var tAg = 0, tTop = 0;
+        if (last2Dbn !== null && last2Dbn > 0) { tTop += last2Dbn * 0.45; tAg += 0.45; }
+        if (midBrDbn !== null && midBrDbn > 0) { tTop += midBrDbn * 0.25; tAg += 0.25; }
+        if (avgDbn > 0) { tTop += avgDbn * 0.20; tAg += 0.20; }
+        if (histBrDbn > 0) { tTop += histBrDbn * 0.10; tAg += 0.10; }
+        trendAdjustedPrice = tAg > 0 ? tTop / tAg : avgDbn;
 
         return {name:e[0], dbn:avgDbn, adjustedDbn:trendAdjustedPrice, last2Dbn:last2Dbn};
       }).sort(function(a,b){return b.adjustedDbn - a.adjustedDbn});
