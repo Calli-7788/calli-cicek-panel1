@@ -1080,10 +1080,11 @@ function calcWeekForecast(cicek, targetAy, targetHafta, yillar, currentYearAvg, 
 
   const merkez = mevsimselTahmin * wMevsim + (lastWeekDbn > 0 ? lastWeekDbn : mevsimselTahmin) * wGuncel + trendTahmin * wTrend;
 
-  // Güven aralığı — standart sapma bazlı (±1.96σ = %95 güven)
+  // Güven aralığı — MERKEZ bazlı (bant ile nokta tahmin tutarlı olsun)
   const mevsStd = mevsimselYuzdeler.length >= 2 ? Math.sqrt(mevsimselYuzdeler.reduce((s,x) => s + Math.pow(x - ortMevsimsel, 2), 0) / mevsimselYuzdeler.length) : ortMevsimsel * 0.15;
-  const alt = currentYearAvg * Math.max(0.3, ortMevsimsel - 1.96 * mevsStd);
-  const ust = currentYearAvg * (ortMevsimsel + 1.96 * mevsStd);
+  const bandGenisligi = currentYearAvg * 1.96 * mevsStd;
+  const alt = Math.max(0, merkez - bandGenisligi);
+  const ust = merkez + bandGenisligi;
 
   // Güven seviyesi — yıl sayısı + standart sapma bazlı
   let guven = "orta";
@@ -1161,7 +1162,8 @@ function getHeatData(filtered) {
     const p = k.split("|");
     return { cicek: p[0], sube: p[1], ...v, dbn: v.d > 0 ? v.net / v.d : 0, avgP: v.d > 0 ? v.ciro / v.d : 0 };
   });
-  list.sort((a, b) => state.hmSort === "net" ? b.dbn - a.dbn : b.avgP - a.avgP);
+  if (state.hmSort === "totalnet") list.sort((a, b) => b.net - a.net);
+  else list.sort((a, b) => b.dbn - a.dbn);
   return list;
 }
 
@@ -1220,9 +1222,12 @@ function getYoY(filtered) {
   const branches = Object.entries(branchMap).map(([name, v]) => ({
     name,
     thisNet: v.thisNet, thisD: v.thisD,
+    thisDbn: v.thisD > 0 ? v.thisNet / v.thisD : 0,
     lastNet: v.lastNet, lastD: v.lastD,
+    lastDbn: v.lastD > 0 ? v.lastNet / v.lastD : 0,
     netDiff: v.thisNet - v.lastNet,
     netPct: v.lastNet > 0 ? ((v.thisNet - v.lastNet) / v.lastNet * 100) : null,
+    dbnPct: (v.lastD > 0 && v.thisD > 0) ? (((v.thisNet/v.thisD)-(v.lastNet/v.lastD))/(v.lastNet/v.lastD)*100) : null,
   })).sort((a, b) => b.thisNet - a.thisNet);
 
   return {
@@ -1905,19 +1910,39 @@ function render() {
   if (state.tab === "heat") {
     const hd = getHeatData(filtered);
     html += `<div class="sec-title">En Kârlı Kombinasyonlar</div>`;
+    html += `<div style="font-size:10px;color:#64748b;margin-bottom:8px;margin-top:-6px">Çiçek × Şube kombinasyonları · Güven + karar etkisi dahil</div>`;
     html += `<div style="display:flex;gap:6px;margin-bottom:14px">`;
-    [["net","Demet Başı Net"],["price","Ort. Fiyat"]].forEach(([k,l]) => {
+    [["net","Dm Başı Net"],["totalnet","Toplam Net"]].forEach(([k,l]) => {
       html += `<button class="preset-btn ${state.hmSort===k?'active':''}" onclick="setState({hmSort:'${k}'})">${l}</button>`;
     });
     html += `</div>`;
     const hShow = state.expanded.heat ? 999 : 15;
-    const mx = hd[0] ? (state.hmSort === "net" ? hd[0].dbn : hd[0].avgP) : 1;
+    const lider = hd[0];
+    const liderVal = lider ? (state.hmSort === "totalnet" ? lider.net : lider.dbn) : 1;
+
     hd.slice(0, hShow).forEach((h, i) => {
-      const v = state.hmSort === "net" ? h.dbn : h.avgP;
-      const pct = mx > 0 ? (v / mx) * 100 : 0;
+      const isDbnMode = state.hmSort !== "totalnet";
+      const v = isDbnMode ? h.dbn : h.net;
+      const pct = liderVal > 0 ? (v / liderVal) * 100 : 0;
       const intensity = pct / 100;
       const colors = ["#fbbf24","#cbd5e1","#c49a6c"];
-      html += `<div class="heat-row"><div style="width:20px;text-align:center;font-size:10px;font-weight:700;color:${i<3?colors[i]:'#475569'}">${i+1}</div><div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(h.cicek)}</div><div style="font-size:10px;color:#64748b">${esc(h.sube)} · ${h.d}dm</div></div><div style="width:80px"><div style="height:6px;background:rgba(255,255,255,0.04);border-radius:3px"><div style="height:100%;border-radius:3px;width:${pct}%;background:rgba(34,197,94,${(0.3+intensity*0.5).toFixed(2)})"></div></div></div><div style="width:60px;text-align:right;font-size:13px;font-weight:700;color:rgba(52,211,153,${(0.5+intensity*0.5).toFixed(2)})">${fmt(v)}</div></div>`;
+
+      // Güven etiketi
+      const guvenTxt = h.d < 5 ? '<span style="color:#f87171;font-size:7px"> ⚠az</span>' : h.d < 15 ? '<span style="color:#fbbf24;font-size:7px"> ◐</span>' : '';
+
+      // Liderden fark
+      const liderFark = lider && isDbnMode ? (h.dbn - lider.dbn) : 0;
+      const farkTxt = i > 0 && liderFark !== 0 && isDbnMode ? '<span style="color:#f87171;font-size:8px"> ' + liderFark.toFixed(0) + '</span>' : '';
+
+      html += `<div class="heat-row">`;
+      html += `<div style="width:18px;text-align:center;font-size:10px;font-weight:700;color:${i<3?colors[i]:'#475569'}">${i+1}</div>`;
+      html += `<div style="flex:1;min-width:0">`;
+      html += `<div style="font-size:12px;font-weight:600;color:${h.d<5?'#64748b':'#e2e8f0'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(h.cicek)}</div>`;
+      html += `<div style="font-size:10px;color:#64748b">${esc(h.sube)} · ${h.d}dm${guvenTxt} · <span style="color:#94a3b8">${fmt(h.net)} net</span>${farkTxt}</div>`;
+      html += `</div>`;
+      html += `<div style="width:65px"><div style="height:5px;background:rgba(255,255,255,0.04);border-radius:3px"><div style="height:100%;border-radius:3px;width:${pct}%;background:rgba(34,197,94,${(0.3+intensity*0.5).toFixed(2)})"></div></div></div>`;
+      html += `<div style="width:55px;text-align:right;font-size:13px;font-weight:700;color:rgba(52,211,153,${(0.5+intensity*0.5).toFixed(2)})">${isDbnMode ? fmt(h.dbn) : fmt(h.net)}</div>`;
+      html += `</div>`;
     });
     if (hd.length > 15) html += `<button class="show-more" style="margin-top:8px" onclick="toggleExp('heat')">${state.expanded.heat?'Daha az ▲':'Tümü ('+hd.length+' kombo) ▼'}</button>`;
   }
@@ -1958,11 +1983,17 @@ function render() {
       const flShow = state.expanded.yoyFlowers ? 999 : 6;
       y.flowers.slice(0, flShow).forEach(f => {
         const hasBoth = f.thisD > 0 && f.lastD > 0;
+        const isNew = f.thisD > 0 && f.lastD === 0;
+        const isGone = f.thisD === 0 && f.lastD > 0;
         const diffColor = f.dbnDiff > 0 ? "#34d399" : f.dbnDiff < 0 ? "#f87171" : "#64748b";
         const diffSign = f.dbnDiff > 0 ? "+" : "";
 
         html += `<div class="card" style="margin-bottom:8px;padding:12px 14px">`;
-        html += `<div style="font-size:13px;font-weight:600;color:#f8fafc;margin-bottom:8px">${esc(f.name)}</div>`;
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">`;
+        html += `<div style="font-size:13px;font-weight:600;color:#f8fafc">${esc(f.name)}</div>`;
+        if (isNew) html += `<span style="font-size:9px;padding:2px 6px;border-radius:4px;background:rgba(34,197,94,0.15);color:#4ade80;font-weight:600">🆕 Yeni</span>`;
+        else if (isGone) html += `<span style="font-size:9px;padding:2px 6px;border-radius:4px;background:rgba(239,68,68,0.15);color:#f87171;font-weight:600">Çıktı</span>`;
+        html += `</div>`;
 
         // Demet row
         html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0">`;
@@ -2005,8 +2036,12 @@ function render() {
       // Branch comparison
       html += `<div class="sec-title">Şube Bazlı Karşılaştırma</div>`;
       const brShow = state.expanded.yoyBranches ? 999 : 5;
+      const yoyTotalThisNet = y.branches.reduce((s,b) => s + b.thisNet, 0);
+      const yoyTotalLastNet = y.branches.reduce((s,b) => s + b.lastNet, 0);
       y.branches.slice(0, brShow).forEach(b => {
         const hasBoth = b.thisNet > 0 && b.lastNet > 0;
+        const thisPay = yoyTotalThisNet > 0 ? (b.thisNet / yoyTotalThisNet * 100) : 0;
+        const lastPay = yoyTotalLastNet > 0 ? (b.lastNet / yoyTotalLastNet * 100) : 0;
         html += `<div class="card" style="margin-bottom:8px;padding:12px 14px">`;
         html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">`;
         html += `<div style="font-size:13px;font-weight:600;color:#f8fafc">${esc(b.name)}</div>`;
@@ -2019,22 +2054,49 @@ function render() {
         html += `<span style="color:#e2e8f0;font-weight:600">${b.thisNet > 0 ? fmt(b.thisNet) : '—'}</span>`;
         html += `</div>`;
         html += `<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0">`;
+        html += `<span style="color:#64748b">Dm Başı Net</span>`;
+        html += `<span style="color:#94a3b8">${b.lastDbn > 0 ? fmt(b.lastDbn) : '—'}</span>`;
+        html += `<span style="color:#475569">→</span>`;
+        html += `<span style="color:#e2e8f0;font-weight:600">${b.thisDbn > 0 ? fmt(b.thisDbn) : '—'}</span>`;
+        if (b.dbnPct != null) html += `<span style="font-size:10px;color:${b.dbnPct>0?'#34d399':'#f87171'}">${b.dbnPct>0?'+':''}${b.dbnPct.toFixed(0)}%</span>`;
+        html += `</div>`;
+        html += `<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0">`;
         html += `<span style="color:#64748b">Demet</span>`;
         html += `<span style="color:#94a3b8">${b.lastD || '—'}</span>`;
         html += `<span style="color:#475569">→</span>`;
         html += `<span style="color:#e2e8f0;font-weight:600">${b.thisD || '—'}</span>`;
         html += `</div>`;
+        html += `<div style="font-size:9px;color:#64748b;margin-top:4px">Pay: <span style="color:#94a3b8">%${lastPay.toFixed(0)}</span> → <span style="color:#fbbf24">%${thisPay.toFixed(0)}</span></div>`;
         html += `</div>`;
       });
       if (y.branches.length > 5) html += `<button class="show-more" onclick="toggleExp('yoyBranches')">${state.expanded.yoyBranches ? 'Daha az ▲' : 'Tüm şubeler (' + y.branches.length + ') ▼'}</button>`;
 
-      // Summary insight
+      // Summary insight — 3 satırlık güçlendirilmiş yorum
       const topGainer = y.flowers.filter(f => f.dbnPct != null && f.dbnPct > 0).sort((a, b) => b.dbnPct - a.dbnPct)[0];
       const topLoser = y.flowers.filter(f => f.dbnPct != null && f.dbnPct < 0).sort((a, b) => a.dbnPct - b.dbnPct)[0];
-      html += `<div class="card" style="background:rgba(96,165,250,0.06);border-color:rgba(96,165,250,0.12);margin-top:14px"><div style="font-size:12px;font-weight:600;color:#60a5fa;margin-bottom:6px">📊 Özet Yorum</div><div style="font-size:13px;color:#cbd5e1;line-height:1.6">`;
-      html += y.nCh > 0 ? 'Geçen yıla göre net gelir %' + y.nCh.toFixed(0) + ' artmış. ' : 'Net gelir %' + Math.abs(y.nCh).toFixed(0) + ' geride. ';
-      if (topGainer) html += 'En çok yükselen: ' + esc(topGainer.name) + ' (+%' + topGainer.dbnPct.toFixed(0) + ' dm başı). ';
-      if (topLoser) html += 'En çok düşen: ' + esc(topLoser.name) + ' (-%' + Math.abs(topLoser.dbnPct).toFixed(0) + ' dm başı).';
+      const topBranch = y.branches.filter(b => b.netPct != null && b.netPct > 0).sort((a, b) => b.netDiff - a.netDiff)[0];
+      const newFlowers = y.flowers.filter(f => f.thisD > 0 && f.lastD === 0);
+      const goneFlowers = y.flowers.filter(f => f.thisD === 0 && f.lastD > 0);
+      const demetCh = y.lD > 0 ? ((y.tD - y.lD) / y.lD * 100) : null;
+
+      html += `<div class="card" style="background:rgba(96,165,250,0.06);border-color:rgba(96,165,250,0.12);margin-top:14px"><div style="font-size:12px;font-weight:600;color:#60a5fa;margin-bottom:6px">📊 Özet Yorum</div><div style="font-size:12px;color:#cbd5e1;line-height:1.8">`;
+      // Satır 1: Ana artış/düşüş nedeni
+      if (y.nCh != null && y.nCh > 0 && demetCh != null) {
+        if (demetCh < -3) html += `Net gelir <strong style="color:#4ade80">%${y.nCh.toFixed(0)} arttı</strong>. Ana neden dm başı net yükselişi — hacim %${Math.abs(demetCh).toFixed(0)} gerilese de fiyat kalitesi bunu telafi etti.<br>`;
+        else if (demetCh > 3) html += `Net gelir <strong style="color:#4ade80">%${y.nCh.toFixed(0)} arttı</strong>. Hem fiyat hem hacim artışı birlikte etkili oldu.<br>`;
+        else html += `Net gelir <strong style="color:#4ade80">%${y.nCh.toFixed(0)} arttı</strong>. Hacim benzer seviyede, artış fiyat kalitesinden geldi.<br>`;
+      } else if (y.nCh != null && y.nCh < 0) {
+        html += `Net gelir <strong style="color:#f87171">%${Math.abs(y.nCh).toFixed(0)} geriledi</strong>. `;
+        if (demetCh != null && demetCh < -5) html += `Ana neden hacim düşüşü.<br>`;
+        else html += `Fiyat kalitesi zayıfladı.<br>`;
+      }
+      // Satır 2: Taşıyıcılar
+      if (topGainer) html += `En çok yükselen: <strong style="color:#4ade80">${esc(topGainer.name)}</strong> (+%${topGainer.dbnPct.toFixed(0)} dm başı). `;
+      if (topLoser) html += `En çok gerileyen: <strong style="color:#f87171">${esc(topLoser.name)}</strong> (-%${Math.abs(topLoser.dbnPct).toFixed(0)}).<br>`;
+      // Satır 3: Şube + yeni ürünler
+      if (topBranch) html += `En güçlü şube: <strong>${esc(topBranch.name)}</strong> (+${fmt(topBranch.netDiff)}). `;
+      if (newFlowers.length > 0) html += `${newFlowers.length} yeni ürün devreye girdi. `;
+      if (goneFlowers.length > 0) html += `${goneFlowers.length} ürün bu dönem satılmadı.`;
       html += `</div></div>`;
     }
   }
@@ -2065,9 +2127,16 @@ function render() {
         else if (idx >= 85) { bg = "rgba(239,68,68,0.08)"; cl = "#fca5a5"; }
         else { bg = "rgba(239,68,68,0.15)"; cl = "#f87171"; }
         const border = isBuAy ? "border:2px solid #fbbf24" : "border:1px solid rgba(255,255,255,0.06)";
+        // Oynaklık göstergesi — güven aralığından CV hesapla
+        const ga = sd.ayGuvenAraligi[a.ay];
+        let oynaklıkDot = "";
+        if (ga && ga.ort > 0) {
+          const cv = (ga.stdSapma / ga.ort * 100);
+          oynaklıkDot = cv <= 10 ? ' <span style="color:#4ade80;font-size:6px">●</span>' : cv <= 20 ? ' <span style="color:#fbbf24;font-size:6px">●</span>' : ' <span style="color:#f87171;font-size:6px">●</span>';
+        }
         html += `<div style="padding:10px 6px;text-align:center;border-radius:8px;background:${bg};${border}">`;
         html += `<div style="font-size:10px;color:#94a3b8">${a.ad}${isBuAy?' 📍':''}</div>`;
-        html += `<div style="font-size:16px;font-weight:800;color:${cl};margin-top:2px">${idx}</div>`;
+        html += `<div style="font-size:16px;font-weight:800;color:${cl};margin-top:2px">${idx}${oynaklıkDot}</div>`;
         html += `<div style="font-size:8px;color:#475569">${a.yilSayisi} yıl · ${a.demet}dm</div>`;
         html += `</div>`;
       }
@@ -2103,9 +2172,18 @@ function render() {
 
       // Backtesting — geçmiş ayların tahmin doğruluğu
       if (sd.backtesting && sd.backtesting.length > 0) {
-        const ortHata = sd.backtesting.reduce((s,b) => s + Math.abs(b.hata), 0) / sd.backtesting.length;
+        const absHatalar = sd.backtesting.map(b => Math.abs(b.hata)).sort((a,b) => a-b);
+        const ortHata = absHatalar.reduce((s,x) => s+x, 0) / absHatalar.length;
+        const medyanHata = absHatalar[Math.floor(absHatalar.length / 2)];
+        const enKotuAy = sd.backtesting.reduce((max, b) => Math.abs(b.hata) > Math.abs(max.hata) ? b : max, sd.backtesting[0]);
+        const enIyiAy = sd.backtesting.reduce((min, b) => Math.abs(b.hata) < Math.abs(min.hata) ? b : min, sd.backtesting[0]);
         html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:6px">🎯 Tahmin Doğruluğu (Backtesting)</div>`;
-        html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">2026 geçmiş aylarında tahmin ne kadar tuttu? Ort. hata: <span style="color:${ortHata<=10?'#4ade80':ortHata<=20?'#fbbf24':'#f87171'};font-weight:600">±${ortHata.toFixed(1)}%</span></div>`;
+        html += `<div style="display:flex;gap:10px;margin-bottom:8px;font-size:10px">`;
+        html += `<div><span style="color:#64748b">Ort. hata:</span> <span style="color:${ortHata<=10?'#4ade80':ortHata<=20?'#fbbf24':'#f87171'};font-weight:600">±${ortHata.toFixed(1)}%</span></div>`;
+        html += `<div><span style="color:#64748b">Medyan:</span> <span style="color:#94a3b8">±${medyanHata.toFixed(1)}%</span></div>`;
+        html += `<div><span style="color:#64748b">En iyi:</span> <span style="color:#4ade80">${enIyiAy.ad}</span></div>`;
+        html += `<div><span style="color:#64748b">En kötü:</span> <span style="color:#f87171">${enKotuAy.ad}</span></div>`;
+        html += `</div>`;
         html += `<div style="display:flex;gap:6px;flex-wrap:wrap">`;
         sd.backtesting.forEach(b => {
           const hataCl = Math.abs(b.hata) <= 10 ? "#4ade80" : Math.abs(b.hata) <= 20 ? "#fbbf24" : "#f87171";
@@ -2361,8 +2439,13 @@ function render() {
           html += `<div style="position:absolute;left:${barStart}%;width:${barWidth}%;height:100%;border-radius:4px;background:linear-gradient(90deg,#22c55e,#4ade80,#22c55e)"></div>`;
           html += `</div>`;
           html += `<div style="display:flex;justify-content:space-between;font-size:9px">`;
-          html += `<span style="color:#6ee7b7">Başlangıç: ~${basStr} <span style="color:#475569">±${sb.basStd} gün</span></span>`;
-          html += `<span style="color:#fca5a5">Bitiş: ~${sonStr} <span style="color:#475569">±${sb.sonStd} gün</span></span>`;
+          const yuksekSapma = sb.basStd > 60 || sb.sonStd > 60;
+          if (yuksekSapma) {
+            html += `<span style="color:#f87171">⚠ Düşük tutarlılık — sezon penceresi çok geniş</span>`;
+          } else {
+            html += `<span style="color:#6ee7b7">Başlangıç: ~${basStr} <span style="color:#475569">±${sb.basStd} gün</span></span>`;
+            html += `<span style="color:#fca5a5">Bitiş: ~${sonStr} <span style="color:#475569">±${sb.sonStd} gün</span></span>`;
+          }
           html += `</div></div>`;
         });
         const totalSezon = cicekSirali.filter(item => sd.cicekSezonBilgi[item.cicek]).length;
@@ -2379,8 +2462,12 @@ function render() {
       const buAyDbn = buAyD > 0 ? buAyFiltre.reduce((s, r) => s + r.net, 0) / buAyD : 0;
       const beklenen = sd.ort2026 * buAyData.ortYuzde;
       const fark = beklenen > 0 ? ((buAyDbn - beklenen) / beklenen * 100) : 0;
-      html += `<div class="card" style="margin-bottom:14px;background:${fark>=0?'rgba(34,197,94,0.06)':'rgba(239,68,68,0.06)'};border-color:${fark>=0?'rgba(34,197,94,0.12)':'rgba(239,68,68,0.12)'}">`;
-      html += `<div style="font-size:13px;font-weight:700;color:${fark>=0?'#4ade80':'#f87171'};margin-bottom:8px">📍 ${ayAdlari[buAy]} 2026 — ${fark>=0?'Beklentinin Üstünde':'Beklentinin Altında'}</div>`;
+      const farkLabel = Math.abs(fark) < 2 ? 'Beklentiyle Uyumlu' : fark >= 2 ? 'Beklentinin Üstünde' : 'Beklentinin Altında';
+      const farkColor = Math.abs(fark) < 2 ? '#60a5fa' : fark >= 2 ? '#4ade80' : '#f87171';
+      const farkBg = Math.abs(fark) < 2 ? 'rgba(96,165,250,0.06)' : fark >= 2 ? 'rgba(34,197,94,0.06)' : 'rgba(239,68,68,0.06)';
+      const farkBorder = Math.abs(fark) < 2 ? 'rgba(96,165,250,0.12)' : fark >= 2 ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)';
+      html += `<div class="card" style="margin-bottom:14px;background:${farkBg};border-color:${farkBorder}">`;
+      html += `<div style="font-size:13px;font-weight:700;color:${farkColor};margin-bottom:8px">📍 ${ayAdlari[buAy]} 2026 — ${farkLabel}</div>`;
       html += `<div style="display:flex;gap:16px;font-size:12px"><div><div style="font-size:9px;color:#64748b">Beklenen</div><div style="font-size:16px;font-weight:800;color:#94a3b8">${fmt(beklenen)}</div></div><div><div style="font-size:9px;color:#64748b">Gerçekleşen</div><div style="font-size:16px;font-weight:800;color:#f8fafc">${buAyDbn > 0 ? fmt(buAyDbn) : '—'}</div></div><div><div style="font-size:9px;color:#64748b">Fark</div><div style="font-size:16px;font-weight:800;color:${fark>=0?'#4ade80':'#f87171'}">${fark>=0?'+':''}${fark.toFixed(1)}%</div></div></div></div>`;
     }
 
@@ -2490,9 +2577,31 @@ function render() {
             html += `<div style="padding:6px 4px;text-align:center;border-radius:8px;background:rgba(255,255,255,0.02)"><div style="font-size:9px;color:#333">${ayKisa[m]}</div><div style="font-size:10px;color:#333">—</div></div>`;
           } else {
             const proj = cicekOrt2026 * data.ortYuzde;
-            html += `<div style="padding:6px 4px;text-align:center;border-radius:8px;background:${isBuAy?'rgba(250,204,21,0.1)':'rgba(255,255,255,0.03)'};border:1px solid ${isBuAy?'rgba(250,204,21,0.2)':'rgba(255,255,255,0.04)'}">`;
-            html += `<div style="font-size:9px;color:${isPast?'#475569':'#94a3b8'}">${ayAdlari[m]}</div>`;
+            const dusukVeri = data.yilSayisi <= 2;
+            // Çiçek bazlı güven aralığı hesapla — bu çiçeğin bu ayındaki yıllık oranların std sapması
+            const cYilOranlar = [];
+            const cYilOrtTmp = {};
+            ALL_DATA.filter(r => r.c === secili.cicek).forEach(r => { const y=r.t.substring(0,4); if(!cYilOrtTmp[y]) cYilOrtTmp[y]={net:0,d:0}; cYilOrtTmp[y].net+=r.net; cYilOrtTmp[y].d+=r.d; });
+            ALL_DATA.filter(r => r.c === secili.cicek && parseInt(r.t.substring(5,7)) === m).forEach(r => {
+              const y=r.t.substring(0,4); if(!cYilOranlar._t) cYilOranlar._t={}; if(!cYilOranlar._t[y]) cYilOranlar._t[y]={net:0,d:0}; cYilOranlar._t[y].net+=r.net; cYilOranlar._t[y].d+=r.d;
+            });
+            let altProj = null, ustProj = null;
+            if (cYilOranlar._t) {
+              const oranlar = [];
+              Object.entries(cYilOranlar._t).forEach(([y,v]) => { const yd = cYilOrtTmp[y]&&cYilOrtTmp[y].d>0?cYilOrtTmp[y].net/cYilOrtTmp[y].d:0; if(yd>0&&v.d>0) oranlar.push((v.net/v.d)/yd); });
+              if (oranlar.length >= 2) {
+                const oOrt = oranlar.reduce((s,x)=>s+x,0)/oranlar.length;
+                const oStd = Math.sqrt(oranlar.reduce((s,x)=>s+Math.pow(x-oOrt,2),0)/oranlar.length);
+                altProj = cicekOrt2026 * Math.max(0.3, oOrt - 1.96 * oStd);
+                ustProj = cicekOrt2026 * (oOrt + 1.96 * oStd);
+              }
+            }
+            html += `<div style="padding:6px 4px;text-align:center;border-radius:8px;background:${isBuAy?'rgba(250,204,21,0.1)':'rgba(255,255,255,0.03)'};border:1px solid ${isBuAy?'rgba(250,204,21,0.2)':'rgba(255,255,255,0.04)'};${dusukVeri?'opacity:0.5':''}">`;
+            html += `<div style="font-size:9px;color:${isPast?'#475569':'#94a3b8'}">${ayAdlari[m]}${dusukVeri?' <span style="font-size:6px;color:#f87171">!</span>':''}</div>`;
             html += `<div style="font-size:14px;font-weight:700;color:${isBuAy?'#fbbf24':isPast?'#64748b':'#c4b5fd'}">${fmt(proj)}</div>`;
+            if (altProj && ustProj && !isPast) {
+              html += `<div style="font-size:7px;color:#475569">${fmt(altProj)}–${fmt(ustProj)}</div>`;
+            }
             html += `</div>`;
           }
         }
@@ -2507,8 +2616,12 @@ function render() {
         const beklenen = cicekOrt2026 * buAyMevsim.ortYuzde;
         const fark = beklenen > 0 ? ((buAyDbn - beklenen) / beklenen * 100) : 0;
         if (buAyDbn > 0) {
-          html += `<div class="card" style="margin-bottom:14px;background:${fark>=0?'rgba(34,197,94,0.06)':'rgba(239,68,68,0.06)'};border-color:${fark>=0?'rgba(34,197,94,0.12)':'rgba(239,68,68,0.12)'}">`;
-          html += `<div style="font-size:12px;font-weight:700;color:${fark>=0?'#4ade80':'#f87171'};margin-bottom:6px">📍 ${ayAdlari[buAy]} — ${fark>=0?'Beklentinin Üstünde':'Beklentinin Altında'}</div>`;
+          const fL = Math.abs(fark) < 2 ? 'Beklentiyle Uyumlu' : fark >= 2 ? 'Beklentinin Üstünde' : 'Beklentinin Altında';
+          const fC = Math.abs(fark) < 2 ? '#60a5fa' : fark >= 2 ? '#4ade80' : '#f87171';
+          const fBg = Math.abs(fark) < 2 ? 'rgba(96,165,250,0.06)' : fark >= 2 ? 'rgba(34,197,94,0.06)' : 'rgba(239,68,68,0.06)';
+          const fBr = Math.abs(fark) < 2 ? 'rgba(96,165,250,0.12)' : fark >= 2 ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)';
+          html += `<div class="card" style="margin-bottom:14px;background:${fBg};border-color:${fBr}">`;
+          html += `<div style="font-size:12px;font-weight:700;color:${fC};margin-bottom:6px">📍 ${ayAdlari[buAy]} — ${fL}</div>`;
           html += `<div style="display:flex;gap:14px;font-size:12px"><div><div style="font-size:9px;color:#64748b">Beklenen</div><div style="font-size:15px;font-weight:800;color:#94a3b8">${fmt(beklenen)}</div></div><div><div style="font-size:9px;color:#64748b">Gerçekleşen</div><div style="font-size:15px;font-weight:800;color:#f8fafc">${fmt(buAyDbn)}</div></div><div><div style="font-size:9px;color:#64748b">Fark</div><div style="font-size:15px;font-weight:800;color:${fark>=0?'#4ade80':'#f87171'}">${fark>=0?'+':''}${fark.toFixed(1)}%</div></div></div></div>`;
         }
       }
@@ -2618,28 +2731,33 @@ function render() {
         if (!cicekSubeAy[r.s][ay]) cicekSubeAy[r.s][ay] = {net:0,d:0};
         cicekSubeAy[r.s][ay].net += r.net; cicekSubeAy[r.s][ay].d += r.d;
       });
-      // Bu ayda aktif şubeler
+      // Bu ayda aktif şubeler — minimum 3dm eşiği ile filtrele
       const subePerf = Object.entries(cicekSubeAy).map(([sube, aylar]) => {
         const buAyV = aylar[buAy];
         const buAyDbn = buAyV && buAyV.d > 0 ? buAyV.net / buAyV.d : 0;
+        const buAyD = buAyV ? buAyV.d : 0;
         const toplamD = Object.values(aylar).reduce((s,v) => s + v.d, 0);
-        return { sube, buAyDbn, toplamD, aktifAySayisi: Object.keys(aylar).length };
-      }).filter(s => s.buAyDbn > 0 || s.toplamD >= 20).sort((a,b) => b.buAyDbn - a.buAyDbn);
+        return { sube, buAyDbn, buAyD, toplamD, aktifAySayisi: Object.keys(aylar).length };
+      }).filter(s => s.buAyDbn > 0 && s.buAyD >= 3).sort((a,b) => b.buAyDbn - a.buAyDbn);
 
       if (subePerf.length > 0) {
         html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:8px">📍 ${esc(secili.cicek)} — Şube Performansı (${ayAdlari[buAy]})</div>`;
-        html += `<div style="font-size:10px;color:#64748b;margin-bottom:8px">Bu çiçeği bu ay hangi şubeye göndermek daha kârlı?</div>`;
+        html += `<div style="font-size:10px;color:#64748b;margin-bottom:8px">Bu çiçeği bu ay hangi şubeye göndermek daha kârlı? (min 3dm)</div>`;
         const maxSubeDbn = subePerf[0].buAyDbn;
         subePerf.slice(0, 8).forEach((s, i) => {
           const w = maxSubeDbn > 0 ? (s.buAyDbn / maxSubeDbn * 100) : 0;
-          const isBest = i === 0;
+          const isBest = i === 0 && s.buAyD >= 5; // Kazanan en az 5dm olmalı
+          const guvenTxt = s.buAyD < 5 ? ' <span style="color:#f87171;font-size:7px">⚠az</span>' : s.buAyD < 15 ? ' <span style="color:#fbbf24;font-size:7px">◐</span>' : '';
           html += `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-top:${i>0?'1px solid rgba(255,255,255,0.03)':'none'}">`;
           html += `<div style="width:70px;font-size:10px;font-weight:${isBest?'700':'500'};color:${isBest?'#4ade80':'#e2e8f0'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${isBest?'🏆 ':''}${esc(s.sube)}</div>`;
           html += `<div style="flex:1;height:5px;background:rgba(255,255,255,0.04);border-radius:3px"><div style="height:100%;border-radius:3px;width:${w}%;background:${isBest?'#4ade80':'rgba(148,163,184,0.3)'}"></div></div>`;
-          html += `<div style="width:50px;text-align:right;font-size:12px;font-weight:700;color:${isBest?'#4ade80':'#cbd5e1'}">${s.buAyDbn > 0 ? fmt(s.buAyDbn) : '—'}</div>`;
+          html += `<div style="width:50px;text-align:right;font-size:12px;font-weight:700;color:${isBest?'#4ade80':'#cbd5e1'}">${fmt(s.buAyDbn)}</div>`;
+          html += `<div style="width:35px;text-align:right;font-size:9px;color:#64748b">${s.buAyD}dm${guvenTxt}</div>`;
           html += `</div>`;
         });
         html += `</div>`;
+      } else {
+        html += `<div class="card" style="margin-bottom:14px;text-align:center;padding:16px;color:#475569;font-size:11px">📍 ${esc(secili.cicek)} — ${ayAdlari[buAy]} için yeterli şube verisi yok</div>`;
       }
 
     } else {
@@ -2690,10 +2808,12 @@ function render() {
       }
       // Şube bazlı tahmin
       if (fc.subeTahminleri.length > 0) {
-        html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:10px">📍 Şube Bazlı Tahmin</div>`;
+        html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:6px">📍 Şube Bazlı Tahmin</div>`;
+        html += `<div style="font-size:9px;color:#64748b;margin-bottom:8px">● yüksek güven · ● orta · ● düşük güven</div>`;
         fc.subeTahminleri.forEach((st, i) => {
           const guvenCl = st.guven === "yüksek" ? "#4ade80" : st.guven === "orta" ? "#fbbf24" : "#f87171";
-          html += `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:${i>0?'1px solid rgba(255,255,255,0.03)':'none'}"><div style="flex:1"><div style="font-size:12px;font-weight:600;color:#e2e8f0">${esc(st.sube)}</div><div style="font-size:9px;color:#64748b">Şu an: ${st.sonFiyat > 0 ? fmt(st.sonFiyat) : '—'}</div></div><div style="text-align:right"><div style="font-size:14px;font-weight:700;color:#c4b5fd">${fmt(st.merkez)}</div><div style="font-size:8px;color:#475569">${fmt(st.alt)}–${fmt(st.ust)}</div></div><div style="width:6px;height:6px;border-radius:50%;background:${guvenCl}"></div></div>`;
+          const veriYok = !st.sonFiyat || st.sonFiyat <= 0;
+          html += `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:${i>0?'1px solid rgba(255,255,255,0.03)':'none'}"><div style="flex:1"><div style="font-size:12px;font-weight:600;color:#e2e8f0">${esc(st.sube)}</div><div style="font-size:9px;color:#64748b">Şu an: ${veriYok ? '<span style="color:#f87171">veri yok</span>' : fmt(st.sonFiyat)}${veriYok ? ' · <span style="color:#f87171;font-size:8px">mevsimsel tahmin</span>' : ''}</div></div><div style="text-align:right"><div style="font-size:14px;font-weight:700;color:${veriYok?'#64748b':'#c4b5fd'}">${fmt(st.merkez)}</div><div style="font-size:8px;color:#475569">${fmt(st.alt)}–${fmt(st.ust)}</div></div><div style="width:6px;height:6px;border-radius:50%;background:${guvenCl}" title="${st.guven} güven"></div></div>`;
         });
         html += `</div>`;
       }
@@ -2716,8 +2836,10 @@ function render() {
       const maxD = Math.max(...yilListesi.map(y => y.d));
 
       // Nominal + Reel Dm Başı Net bar chart yan yana
+      const buYilStr = String(new Date().getFullYear());
+      const buYilTamMi = new Date().getMonth() === 11 && new Date().getDate() >= 28;
       html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:4px">Dm Başı Net Trendi</div>`;
-      html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Nominal (yeşil) + Reel 2019 bazlı (mavi)</div>`;
+      html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Nominal (yeşil) + Reel 2019 bazlı (mavi)${!buYilTamMi?' · <span style="color:#fbbf24">'+buYilStr+' YTD (yıl tamamlanmadı)</span>':''}</div>`;
       html += `<div style="display:flex;align-items:flex-end;gap:6px;height:110px;padding-bottom:20px">`;
       yilListesi.forEach((y, i) => {
         const h = maxDbn > 0 ? (y.dbn / maxDbn * 90) : 5;
@@ -2739,7 +2861,7 @@ function render() {
 
       // Demet hacim trendi
       html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:4px">Demet Hacim Trendi</div>`;
-      html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Yıllık toplam satılan demet — gerçek büyüme göstergesi</div>`;
+      html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Yıllık toplam satılan demet${!buYilTamMi?' · <span style="color:#fbbf24">'+buYilStr+' YTD</span>':''}</div>`;
       html += `<div style="display:flex;align-items:flex-end;gap:6px;height:80px;padding-bottom:20px">`;
       yilListesi.forEach((y, i) => {
         const h = maxD > 0 ? (y.d / maxD * 70) : 5;
@@ -2762,7 +2884,8 @@ function render() {
       const reelCagr = yilFark > 0 && ilk.reelDbn > 0 ? (Math.pow(son.reelDbn / ilk.reelDbn, 1 / yilFark) - 1) * 100 : 0;
       const demetCagr = yilFark > 0 && ilk.d > 0 ? (Math.pow(son.d / ilk.d, 1 / yilFark) - 1) * 100 : 0;
 
-      html += `<div class="card" style="margin-bottom:14px;background:rgba(96,165,250,0.06);border-color:rgba(96,165,250,0.12)"><div style="font-size:13px;font-weight:700;color:#60a5fa;margin-bottom:8px">📊 CAGR (${ilk.yil}→${son.yil})</div>`;
+      html += `<div class="card" style="margin-bottom:14px;background:rgba(96,165,250,0.06);border-color:rgba(96,165,250,0.12)"><div style="font-size:13px;font-weight:700;color:#60a5fa;margin-bottom:4px">📊 CAGR (${ilk.yil}→${son.yil})</div>`;
+      if (!buYilTamMi) html += `<div style="font-size:9px;color:#fbbf24;margin-bottom:6px">⚠ ${buYilStr} yılı tamamlanmamış — CAGR yaklaşık değerdir</div>`;
       html += `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center">`;
       html += `<div><div style="font-size:8px;color:#64748b">Nominal Fiyat</div><div style="font-size:16px;font-weight:800;color:#4ade80">+${nominalCagr.toFixed(0)}%</div><div style="font-size:7px;color:#475569">yıllık ort</div></div>`;
       html += `<div><div style="font-size:8px;color:#64748b">Reel Fiyat</div><div style="font-size:16px;font-weight:800;color:${reelCagr>=0?'#60a5fa':'#f87171'}">${reelCagr>=0?'+':''}${reelCagr.toFixed(0)}%</div><div style="font-size:7px;color:#475569">enflasyon düzeltmeli</div></div>`;
@@ -2946,7 +3069,8 @@ function render() {
           html += `<div style="display:grid;grid-template-columns:75px repeat(${topSubeler.length},1fr);gap:2px;margin-bottom:2px"><div style="font-size:8px;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:3px 0">${esc(cicek)}</div>`;
           topSubeler.forEach(sube => {
             const kd = ALL_DATA.filter(r => r.c === cicek && r.s === sube);
-            if (kd.length < 3) { html += `<div style="height:20px;border-radius:3px;background:rgba(255,255,255,0.01)"></div>`; return; }
+            if (kd.length === 0) { html += `<div style="height:20px;border-radius:3px;background:rgba(255,255,255,0.02);display:flex;align-items:center;justify-content:center;font-size:6px;color:#333">—</div>`; return; }
+            if (kd.length < 3) { html += `<div style="height:20px;border-radius:3px;background:rgba(255,255,255,0.04);display:flex;align-items:center;justify-content:center;font-size:6px;color:#475569">az</div>`; return; }
             const cM = sdRisk.cicekMevsim[cicek] || {};
             const cYO = {};
             kd.forEach(r => { const y=r.t.substring(0,4); if(!cYO[y]) cYO[y]={net:0,d:0}; cYO[y].net+=r.net; cYO[y].d+=r.d; });
@@ -3000,23 +3124,29 @@ function render() {
     html += `<div style="font-size:14px;font-weight:700;color:#f8fafc;margin-bottom:12px">📄 Rapor Önizleme</div>`;
     html += `<div style="font-size:11px;color:#64748b;margin-bottom:10px">${dateLabel}</div>`;
 
-    // Summary
-    html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">`;
-    html += `<div style="padding:8px;border-radius:8px;background:rgba(34,197,94,0.08)"><div style="font-size:9px;color:#64748b">Net Gelir</div><div style="font-size:16px;font-weight:800;color:#4ade80">${fmt(rStats.tn)}</div></div>`;
-    html += `<div style="padding:8px;border-radius:8px;background:rgba(255,255,255,0.03)"><div style="font-size:9px;color:#64748b">Demet</div><div style="font-size:16px;font-weight:800;color:#f8fafc">${rStats.td}</div></div>`;
+    // Summary — Net Gelir + Demet + Dm Başı Net
+    html += `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:12px">`;
+    html += `<div style="padding:8px;border-radius:8px;background:rgba(34,197,94,0.08)"><div style="font-size:9px;color:#64748b">Net Gelir</div><div style="font-size:15px;font-weight:800;color:#4ade80">${fmt(rStats.tn)}</div></div>`;
+    html += `<div style="padding:8px;border-radius:8px;background:rgba(255,255,255,0.03)"><div style="font-size:9px;color:#64748b">Demet</div><div style="font-size:15px;font-weight:800;color:#f8fafc">${rStats.td}</div></div>`;
+    html += `<div style="padding:8px;border-radius:8px;background:rgba(255,255,255,0.03)"><div style="font-size:9px;color:#64748b">Dm Başı Net</div><div style="font-size:15px;font-weight:800;color:#f8fafc">${fmt2(rStats.av)}</div></div>`;
     html += `</div>`;
 
-    // Önceki dönem karşılaştırma özeti
+    // Önceki dönem — ÜÇ DELTA birlikte
     if (rData.hasPrev) {
-      const totalNetCh = rData.prevTotalNet > 0 ? ((rStats.tn - rData.prevTotalNet) / rData.prevTotalNet * 100) : null;
-      html += `<div style="padding:8px 10px;border-radius:8px;background:rgba(96,165,250,0.06);border:1px solid rgba(96,165,250,0.1);margin-bottom:12px;font-size:11px;color:#93c5fd">`;
-      html += `📊 Önceki ${rData.prevMezatCount} mezat (${fD(rData.prevSD)}–${fD(rData.prevED)}): ${fmt(rData.prevTotalNet)} net`;
-      if (totalNetCh != null) html += ` → <span style="color:${totalNetCh>0?'#34d399':'#f87171'};font-weight:600">${totalNetCh>0?'+':''}${totalNetCh.toFixed(1)}%</span>`;
-      html += `</div>`;
+      const chNet = rData.prevTotalNet > 0 ? ((rStats.tn - rData.prevTotalNet) / rData.prevTotalNet * 100) : null;
+      const chD = rData.prevTotalD > 0 ? ((rStats.td - rData.prevTotalD) / rData.prevTotalD * 100) : null;
+      const chDbn = rData.prevTotalDbn > 0 ? ((rStats.av - rData.prevTotalDbn) / rData.prevTotalDbn * 100) : null;
+      html += `<div style="padding:8px 10px;border-radius:8px;background:rgba(96,165,250,0.06);border:1px solid rgba(96,165,250,0.1);margin-bottom:12px">`;
+      html += `<div style="font-size:10px;color:#93c5fd;margin-bottom:6px">📊 Önceki ${rData.prevMezatCount} mezata göre (${fD(rData.prevSD)}–${fD(rData.prevED)})</div>`;
+      html += `<div style="display:flex;gap:12px;font-size:11px">`;
+      if (chNet != null) html += `<div><span style="color:#64748b">Net:</span> <span style="color:${chNet>=0?'#34d399':'#f87171'};font-weight:600">${chNet>=0?'+':''}${chNet.toFixed(0)}%</span></div>`;
+      if (chD != null) html += `<div><span style="color:#64748b">Demet:</span> <span style="color:${chD>=0?'#34d399':'#f87171'};font-weight:600">${chD>=0?'+':''}${chD.toFixed(0)}%</span></div>`;
+      if (chDbn != null) html += `<div><span style="color:#64748b">Dm Net:</span> <span style="color:${chDbn>=0?'#34d399':'#f87171'};font-weight:600">${chDbn>=0?'+':''}${chDbn.toFixed(0)}%</span></div>`;
+      html += `</div></div>`;
     }
 
     // Top 5 flowers
-    html += `<div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">En Kârlı 5 Çiçek</div>`;
+    html += `<div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Dm Başı Net Liderleri (İlk 5)</div>`;
     rStats.byF.slice(0, 5).forEach((f, i) => {
       html += `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.03);font-size:12px">`;
       html += `<span style="color:#e2e8f0">${i+1}. ${esc(f.name)}</span>`;
@@ -3024,16 +3154,20 @@ function render() {
       html += `</div>`;
     });
 
-    // Şube + çiçek detay preview (ilk 3)
+    // Şube detay preview — bağlam ekli (dm başı + pay % + demet)
+    const rTotalNet = rData.branchList.reduce((s,b) => s + b.net, 0);
     html += `<div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin:12px 0 6px">Şube Detayları (ilk 3)</div>`;
     rData.branchList.slice(0, 3).forEach((b, i) => {
+      const bDbn = b.d > 0 ? b.net / b.d : 0;
+      const bPay = rTotalNet > 0 ? (b.net / rTotalNet * 100) : 0;
       html += `<div style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04)">`;
-      html += `<div style="display:flex;justify-content:space-between;margin-bottom:4px">`;
+      html += `<div style="display:flex;justify-content:space-between;margin-bottom:2px">`;
       html += `<span style="font-size:12px;font-weight:600;color:#f8fafc">${i===0?'🏆 ':''}${esc(b.name)}</span>`;
-      html += `<span style="font-size:12px;color:#34d399;font-weight:600">${fmt(b.net)} net</span>`;
+      html += `<span style="font-size:12px;color:#34d399;font-weight:600">${fmt(b.net)}</span>`;
       html += `</div>`;
+      html += `<div style="font-size:9px;color:#64748b;margin-bottom:3px">${b.d}dm · ${fmt(bDbn)}/dm · <span style="color:#fbbf24">%${bPay.toFixed(0)} pay</span></div>`;
       if (b.dbnChange != null) {
-        html += `<div style="font-size:10px;color:${b.dbnChange>0?'#34d399':'#f87171'};margin-bottom:3px">Önceki döneme göre dm başı: ${b.dbnChange>0?'+':''}${b.dbnChange.toFixed(1)}%</div>`;
+        html += `<div style="font-size:9px;color:${b.dbnChange>0?'#34d399':'#f87171'};margin-bottom:3px">Önceki döneme göre dm başı: ${b.dbnChange>0?'+':''}${b.dbnChange.toFixed(1)}%</div>`;
       }
       b.flowers.slice(0, 3).forEach(fl => {
         html += `<div style="display:flex;justify-content:space-between;padding:2px 0 2px 10px;font-size:10px">`;
@@ -3044,6 +3178,13 @@ function render() {
       });
       html += `</div>`;
     });
+
+    // Veri zamanı + kayıt sayısı
+    html += `<div style="display:flex;justify-content:space-between;font-size:8px;color:#475569;margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.04)">`;
+    html += `<span>${filtered.length} kayıt · ${rStats.td} demet</span>`;
+    html += `<span>${window._DATA_QUALITY ? '↻ ' + window._DATA_QUALITY.sonGuncelleme : ''}</span>`;
+    html += `</div>`;
+
     html += `<div style="font-size:10px;color:#475569;margin-top:4px;font-style:italic">PDF'te tüm şubeler ve çiçekler tam detaylı yer alır</div>`;
     html += `</div>`;
 
@@ -3082,7 +3223,12 @@ function render() {
     state.aiH.forEach(m => {
       // Simple markdown: **bold** → <strong>, \n → <br>
       let msgHTML = esc(m.t).replace(/\*\*(.*?)\*\*/g, '<strong style="color:#f8fafc">$1</strong>').replace(/\n/g, '<br>');
-      html += `<div class="ai-msg ${m.r==='u'?'ai-msg-user':'ai-msg-ai'}"><div style="font-size:9px;color:${m.r==='u'?'#a78bfa':'#34d399'};margin-bottom:3px;font-weight:600">${m.r==='u'?'Sen':'✦ AI Uzman'}</div><div style="font-size:12px;color:#e2e8f0;line-height:1.6">${msgHTML}</div></div>`;
+      html += `<div class="ai-msg ${m.r==='u'?'ai-msg-user':'ai-msg-ai'}"><div style="font-size:9px;color:${m.r==='u'?'#a78bfa':'#34d399'};margin-bottom:3px;font-weight:600">${m.r==='u'?'Sen':'✦ AI Uzman'}</div><div style="font-size:12px;color:#e2e8f0;line-height:1.6">${msgHTML}</div>`;
+      // AI cevaplarının altına veri zemini ekle
+      if (m.r === 'a') {
+        html += `<div style="margin-top:6px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.04);font-size:8px;color:#475569">📋 ${dateLabel} · ${filtered.length} kayıt · ${stats.td} dm${window._DATA_QUALITY ? ' · ↻ ' + window._DATA_QUALITY.sonGuncelleme : ''}</div>`;
+      }
+      html += `</div>`;
     });
     if (state.aiL) html += `<div class="ai-msg ai-msg-ai"><div style="color:#64748b;font-size:12px">Analiz ediliyor...</div></div>`;
     html += `</div>`;
@@ -3899,33 +4045,44 @@ function generateReportText() {
   const stats = rData.stats;
   const dateLabel = state.sd !== state.ed ? fD(state.sd) + " – " + fD(state.ed) : fDF(state.sd);
 
-  let text = "🌸 ÇALLI ÇİÇEK — HAFTALIK RAPOR\n";
+  let text = "🌸 Çallı Çiçek — Günlük Rapor\n";
   text += "📅 " + dateLabel + "\n\n";
   text += "💰 Net Gelir: " + fmt(stats.tn) + "\n";
-  text += "📦 Demet: " + stats.td + "\n";
-  text += "📊 Ort. Fiyat: " + fmt2(stats.av) + "/dm\n";
+  text += "🌿 Demet: " + stats.td + "\n";
+  text += "📊 Dm Başı Net: " + fmt2(stats.av) + "\n";
 
-  if (rData.hasPrev && rData.prevTotalNet > 0) {
-    const ch = ((stats.tn - rData.prevTotalNet) / rData.prevTotalNet * 100);
-    text += "📈 Önceki döneme göre: " + (ch > 0 ? "+" : "") + ch.toFixed(1) + "%\n";
+  if (rData.hasPrev) {
+    const chNet = rData.prevTotalNet > 0 ? ((stats.tn - rData.prevTotalNet) / rData.prevTotalNet * 100) : null;
+    const chD = rData.prevTotalD > 0 ? ((stats.td - rData.prevTotalD) / rData.prevTotalD * 100) : null;
+    const chDbn = rData.prevTotalDbn > 0 ? ((stats.av - rData.prevTotalDbn) / rData.prevTotalDbn * 100) : null;
+    text += "\n📈 Önceki " + rData.prevMezatCount + " mezata göre:\n";
+    if (chNet != null) text += "  Net: " + (chNet >= 0 ? "+" : "") + chNet.toFixed(0) + "%\n";
+    if (chD != null) text += "  Demet: " + (chD >= 0 ? "+" : "") + chD.toFixed(0) + "%\n";
+    if (chDbn != null) text += "  Dm Başı: " + (chDbn >= 0 ? "+" : "") + chDbn.toFixed(0) + "%\n";
   }
 
-  text += "\n🏆 EN KÂRLI 5 ÇİÇEK:\n";
+  text += "\n🏆 Dm Başı Net Liderleri:\n";
   stats.byF.slice(0, 5).forEach((f, i) => {
-    text += (i + 1) + ". " + f.name + " — " + fmt(f.dbn) + "/dm (" + f.d + " dm)\n";
+    text += (i + 1) + ") " + f.name + " — " + fmt(f.dbn) + "/dm · " + f.d + " dm\n";
   });
 
-  text += "\n📍 ŞUBE DETAYLARI:\n";
+  const rTotalNet = rData.branchList.reduce((s,b) => s + b.net, 0);
+  text += "\n📍 Şubeler:\n";
   rData.branchList.forEach((b, i) => {
-    text += "\n" + (i + 1) + ". " + b.name + " — " + fmt(b.net) + " net (" + b.d + " dm)";
+    const bDbn = b.d > 0 ? b.net / b.d : 0;
+    const bPay = rTotalNet > 0 ? (b.net / rTotalNet * 100) : 0;
+    text += (i + 1) + ") " + b.name + " — " + fmt(b.net) + " · " + b.d + "dm · " + fmt(bDbn) + "/dm · %" + bPay.toFixed(0) + " pay";
     if (b.netChange != null) text += " [" + (b.netChange > 0 ? "+" : "") + b.netChange.toFixed(0) + "%]";
     text += "\n";
-    b.flowers.slice(0, 5).forEach(fl => {
+    b.flowers.slice(0, 3).forEach(fl => {
       text += "   " + fl.name + ": " + fl.d + "dm · " + fmt(fl.dbn) + "/dm";
       if (fl.dbnChange != null) text += " (" + (fl.dbnChange > 0 ? "+" : "") + fl.dbnChange.toFixed(0) + "%)";
       text += "\n";
     });
   });
+
+  text += "\n📝 " + filtered.length + " kayıt";
+  if (window._DATA_QUALITY) text += " · ↻ " + window._DATA_QUALITY.sonGuncelleme;
 
   return text;
 }
@@ -4176,14 +4333,28 @@ async function handleAI() {
       "4. Mezat günleri genelde Pazartesi, Çarşamba, Cuma ama değişebilir. Haftanın günlerine göre fiyat farkları önemli.\n" +
       "5. Kutu başına 8-40 demet. Karışık çiçek bir kutuya konabilir.\n" +
       "6. Şubelerde açık artırma ile satılıyor — sıra numarası kura ile belirlenir, üreticinin kontrolünde değil.\n\n" +
-      "== ÖNERİ KURALLARI ==\n" +
-      "- Kısa, net, aksiyon odaklı cevap ver. Sayıları ve ₺ değerlerini kullan.\n" +
-      "- Her öneride SOMUT rakam ver: '3 kutu Ankara'ya, 2 kutu Kadıköy'e' gibi.\n" +
-      "- 'Bugün ne yapmalıyım' sorulunca: Eldeki çiçeklerin en kârlı gönderim planını yap.\n" +
-      "- 'Hangi gün göndermeli' sorulunca: Haftanın günleri verisini analiz et, en iyi günleri öner.\n" +
-      "- 'Haftalık özet' sorulunca: Bu haftanın performansını özetle, önceki mezatlarla karşılaştır, kritik noktaları belirt.\n" +
-      "- 'Gelecek hafta tahmini' sorulunca: Trend ve geçmiş yıl verisine dayanarak gelecek haftanın fiyat beklentisini söyle.\n" +
-      "- Türkçe cevap ver. Markdown **kalın** kullanabilirsin.\n\n" +
+      "== CEVAP FORMATI ==\n" +
+      "Her operasyonel cevabını şu 4 blokla yapılandır:\n" +
+      "📌 **Sonuç:** 1-2 cümle net cevap\n" +
+      "📊 **Gerekçe:** Hangi veriye dayanıyor, neden böyle öneriyorsun\n" +
+      "⚠ **Risk:** Dikkat edilmesi gereken nokta veya belirsizlik\n" +
+      "🎯 **Aksiyon:** Somut yapılacak iş (şube, kutu sayısı, gün)\n\n" +
+      "== GÜNLÜK BRİFİNG FORMATI ==\n" +
+      "'Bugün ne yapmalıyım' veya günlük brifing sorulunca HER ZAMAN şu 5 alanı ver:\n" +
+      "1. 🏆 Bugün öne çıkan şube ve neden\n" +
+      "2. 🌷 Bugün öne çıkan çiçek ve dm başı net\n" +
+      "3. ⚠ Dikkat edilmesi gereken risk veya düşüş\n" +
+      "4. 🚫 Kaçınılacak kombinasyon varsa belirt\n" +
+      "5. 🎯 1 cümlelik net aksiyon önerisi\n\n" +
+      "== TAHMİN KURALLARI ==\n" +
+      "Gelecek tahminlerinde kesin dil KULLANMA. Şu ifadeleri tercih et:\n" +
+      "- 'muhtemel', 'zayıf/orta/güçlü sinyal', 'geçmiş örüntüye göre'\n" +
+      "- Güven seviyesini her zaman belirt: düşük/orta/yüksek\n" +
+      "- 'Yüksek belirsizlik' durumlarında açıkça söyle\n\n" +
+      "== HESAPLAMA KURALI ==\n" +
+      "Kendi kafana göre rakam üretme. Verilen verideki rakamları kullan.\n" +
+      "Fiyat verirken dm başı net kullan, brüt ile karıştırma.\n" +
+      "Türkçe cevap ver. Markdown **kalın** kullanabilirsin.\n\n" +
       "== VERİLER ==\n" + ctx;
 
     const resp = await fetch("/api/chat", {
