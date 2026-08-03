@@ -1,5 +1,7 @@
 // ═══════════════ GLOBAL DATA VARIABLES ═══════════════
 window.ALL_DATA = [];
+window.ZARAR_DATA = [];  // V2: net <= 0 satırlar (analize girmez, ayrı zarar sayacı)
+window.V2_LOAD_ERROR = false;  // GUNCEL_V2 fetch başarısızsa true → header'da uyarı bandı
 window.FLOWERS = [];
 window.BRANCHES = [];
 window.CICEK_GROUPS = {};

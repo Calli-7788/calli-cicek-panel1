@@ -101,6 +101,11 @@ function render() {
   // Header
   html += `<div class="header"><div class="header-row"><div><div style="font-size:10px;letter-spacing:2px;color:#475569;text-transform:uppercase">Çallı Çiçek</div><div style="font-size:19px;font-weight:700;color:#f8fafc">Üretici Paneli</div></div><div style="display:flex;align-items:center;gap:8px"><button onclick="refreshData()" style="width:32px;height:32px;border-radius:8px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.04);color:#94a3b8;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center" title="Verileri yenile">↻</button><div class="logo">🌸</div></div></div></div>`;
 
+  // V2 fallback uyarı bandı
+  if (window.V2_LOAD_ERROR) {
+    html += `<div style="padding:8px 20px;background:rgba(239,68,68,0.15);border-bottom:1px solid rgba(239,68,68,0.3);color:#fca5a5;font-size:12px;font-weight:600">⚠ Güncel V2 verisi yüklenemedi — 31 Temmuz sonrası veriler eksik</div>`;
+  }
+
   // Alerts
   if (alerts.length > 0 && state.tab === "panel") {
     html += `<div style="padding:8px 20px;border-bottom:1px solid rgba(255,255,255,0.05)"><div class="alert-scroll">`;

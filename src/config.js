@@ -1,6 +1,10 @@
 // ═══════════════ CONFIG ═══════════════
+// Cost Model V2: 31.07.2026 ve sonrası GUNCEL_V2'den gelir (gerçek satır bazlı gider).
+// Eski GUNCEL (gid=1698698520) artık "2026" adıyla yüklenir; V2_CUTOFF ve sonrası satırları atlanır (çift sayım koruması).
+// GIDERLER_V2 (gid=97268542) ve KONTROL_V2 (gid=1085263022) ÇEKİLMİYOR — GUNCEL_V2 satır bazında her şeyi içeriyor (ileride gerekebilir).
 window.SHEETS = {
-  "GUNCEL": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=1698698520&single=true&output=csv",
+  "GUNCEL_V2": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=832972296&single=true&output=csv",
+  "2026": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=1698698520&single=true&output=csv",
   "2025": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=1807975712&single=true&output=csv",
   "2024": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=2134869114&single=true&output=csv",
   "2023": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTgQxEITteEVPQ0eoOaHXgOPe1DSB08I1LE0BTkbUmwHjrDDQJrM9eEXCXP2ubSgSe-Lm0_5OBmzrdI/pub?gid=1233420715&single=true&output=csv",
@@ -11,6 +15,9 @@ window.SHEETS = {
 };
 
 window.GIDER = 0.20;
+
+// V2 kesim tarihi: bu tarih (dahil) ve sonrası SADECE GUNCEL_V2'den okunur
+window.V2_CUTOFF = "2026-07-31";
 
 // ═══════════════ MEVSİMSELLİK ═══════════════
 window.OZEL_GUNLER = [
