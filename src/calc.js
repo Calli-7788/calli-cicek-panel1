@@ -1,5 +1,31 @@
 // ═══════════════ FILTERING & STATS ═══════════════
 
+// V2 alt küme özeti — Cost Model v2 görünürlük yardımcıları (mevcut fonksiyonlara dokunmaz)
+function getV2Ozet(rows) {
+  let n = 0, ciro = 0, gider = 0, d = 0;
+  rows.forEach(r => {
+    if (r.costModel !== "v2") return;
+    n++; ciro += r.ciro; gider += r.toplamGider; d += r.d;
+  });
+  return { n, ciro, gider, d, kesintiPct: ciro > 0 ? (gider / ciro * 100) : null };
+}
+
+// Seçili dönem + filtrelerle eşleşen zarar kayıtları (ZARAR_DATA analiz dışıdır)
+function getZararFiltered() {
+  return window.ZARAR_DATA.filter(r => {
+    if (r.t < state.sd || r.t > state.ed) return false;
+    if (state.sf) {
+      if (state.sf.startsWith("GRUP:")) {
+        if (!r.c.startsWith(state.sf.replace("GRUP:", ""))) return false;
+      } else {
+        if (r.c !== state.sf) return false;
+      }
+    }
+    if (state.sb && r.s !== state.sb) return false;
+    return true;
+  });
+}
+
 function getFiltered() {
   return ALL_DATA.filter(r => {
     if (r.t < state.sd || r.t > state.ed) return false;

@@ -77,6 +77,9 @@ function generateReportText() {
   text += "🌿 Demet: " + stats.td + "\n";
   text += "📊 Dm Başı Net: " + fmt2(stats.av) + "\n";
 
+  const wV2 = getV2Ozet(filtered);
+  if (wV2.kesintiPct !== null) text += "💸 Gerçek kesinti oranı: %" + wV2.kesintiPct.toFixed(1) + "\n";
+
   if (rData.hasPrev) {
     const chNet = rData.prevTotalNet > 0 ? ((stats.tn - rData.prevTotalNet) / rData.prevTotalNet * 100) : null;
     const chD = rData.prevTotalD > 0 ? ((stats.td - rData.prevTotalD) / rData.prevTotalD * 100) : null;

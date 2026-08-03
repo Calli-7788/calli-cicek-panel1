@@ -223,11 +223,27 @@ function render() {
     html += `<div class="card"><div class="lbl">Brüt Ciro</div><div class="val-big" style="color:#94a3b8">${fmt(stats.tc)}</div></div>`;
     html += `</div>`;
 
+    // V2 göstergeleri: gerçek kesinti oranı + zarar sayacı (sadece dönemde V2 verisi varsa)
+    const v2Ozet = getV2Ozet(filtered);
+    const zararF = getZararFiltered();
+    if (v2Ozet.n > 0 || zararF.length > 0) {
+      html += `<div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">`;
+      if (v2Ozet.kesintiPct !== null) {
+        html += `<div style="flex:1;min-width:150px;padding:6px 10px;border-radius:8px;background:rgba(168,85,247,0.08);border:1px solid rgba(168,85,247,0.15);display:flex;justify-content:space-between;align-items:center"><span style="font-size:10px;color:#c4b5fd">💸 Gerçek kesinti</span><span style="font-size:12px;font-weight:700;color:#c4b5fd">%${v2Ozet.kesintiPct.toFixed(1)}</span></div>`;
+      }
+      if (zararF.length > 0) {
+        const zToplam = zararF.reduce((s, r) => s + r.net, 0);
+        html += `<div style="flex:1;min-width:150px;padding:6px 10px;border-radius:8px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);display:flex;justify-content:space-between;align-items:center"><span style="font-size:10px;color:#fca5a5">⚠ ${zararF.length} zarar kaydı</span><span style="font-size:12px;font-weight:700;color:#f87171">−${fmt(Math.abs(zToplam))}</span></div>`;
+      }
+      html += `</div>`;
+    }
+
     // Veri kalite göstergesi
     if (window._DATA_QUALITY) {
       const dq = window._DATA_QUALITY;
+      const v2Bilgi = dq.v2 && dq.v2.satirSayisi > 0 ? ` · V2: ${dq.v2.satirSayisi} satır${dq.v2.saglamaGecmeyen === 0 ? " ✓" : " · ⚠ " + dq.v2.saglamaGecmeyen + " sağlama hatası"}` : "";
       html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 6px;margin-bottom:8px;border-radius:6px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04)">`;
-      html += `<div style="font-size:8px;color:#475569">${new Intl.NumberFormat("tr-TR").format(dq.toplamKayit)} kayıt · ${new Intl.NumberFormat("tr-TR").format(dq.toplamDemet)} dm · Son veri: ${dq.enSonTarih}</div>`;
+      html += `<div style="font-size:8px;color:#475569">${new Intl.NumberFormat("tr-TR").format(dq.toplamKayit)} kayıt · ${new Intl.NumberFormat("tr-TR").format(dq.toplamDemet)} dm · Son veri: ${dq.enSonTarih}${v2Bilgi}</div>`;
       html += `<div style="font-size:8px;color:#475569">↻ ${dq.sonGuncelleme}</div>`;
       html += `</div>`;
     }
@@ -580,15 +596,24 @@ function render() {
       brFlower[key][r.c].d += r.d;
     });
 
+    // Şube bazlı V2 gider/demet (Cost Model v2 — gerçek maliyet farkı)
+    const brV2 = {};
+    filtered.forEach(r => {
+      if (r.costModel !== "v2") return;
+      if (!brV2[r.s]) brV2[r.s] = { gider: 0, d: 0 };
+      brV2[r.s].gider += r.toplamGider; brV2[r.s].d += r.d;
+    });
+
     brList.slice(0, state.expanded.subeDetail ? 999 : 5).forEach((b, i) => {
       const flowers = brFlower[b.name] || {};
       const fList = Object.entries(flowers).map(([n, v]) => ({ name: n, ...v, dbn: v.d > 0 ? v.net / v.d : 0 })).sort((a, bb) => bb.dbn - a.dbn);
       const subeToplamNet = fList.reduce((s, fl) => s + fl.net, 0);
+      const v2b = brV2[b.name];
 
       html += `<div class="card" style="margin-bottom:8px;padding:12px 14px">`;
       html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">`;
       html += `<div style="font-size:13px;font-weight:600;color:#f8fafc">${esc(b.name)}</div>`;
-      html += `<div style="font-size:9px;color:#64748b">${fList.length} çiçek · ${b.records} kayıt</div>`;
+      html += `<div style="font-size:9px;color:#64748b">${fList.length} çiçek · ${b.records} kayıt${v2b && v2b.d > 0 ? ' · <span style="color:#c4b5fd">Gider/Dm: ' + fmt2(v2b.gider / v2b.d) + '</span>' : ''}</div>`;
       html += `</div>`;
       fList.slice(0, 5).forEach((fl, j) => {
         const flPay = subeToplamNet > 0 ? (fl.net / subeToplamNet * 100) : 0;
@@ -741,6 +766,7 @@ function render() {
 
       // Change summary
       html += `<div class="card" style="text-align:center;margin-bottom:14px"><div style="display:flex;justify-content:center;gap:30px"><div><div style="font-size:10px;color:#94a3b8">Net Gelir</div><div style="font-size:20px;font-weight:800;margin-top:4px">${trendHTML(y.nCh)}</div></div><div><div style="font-size:10px;color:#94a3b8">Dm Başı Net</div><div style="font-size:20px;font-weight:800;margin-top:4px">${trendHTML(y.pCh)}</div></div><div><div style="font-size:10px;color:#94a3b8">Demet</div><div style="font-size:20px;font-weight:800;margin-top:4px">${trendHTML(y.lD > 0 ? ((y.tD - y.lD) / y.lD * 100) : null)}</div></div></div></div>`;
+      html += `<div style="font-size:9px;color:#64748b;text-align:center;margin-top:-8px;margin-bottom:14px">ℹ 2026 Ağu+ gerçek gider modeli, önceki dönemler %20 tahmini — net karşılaştırması yaklaşık %3-8 sapabilir</div>`;
 
       // Flower comparison
       html += `<div class="sec-title">Çiçek Bazlı Karşılaştırma</div>`;
@@ -932,7 +958,9 @@ function render() {
           html += `</div>`;
         }
       });
-      html += `</div></div>`;
+      html += `</div>`;
+      html += `<div style="font-size:8px;color:#475569;margin-top:8px">ℹ 31 Tem 2026 sonrası gerçek gider modeline geçilmiştir</div>`;
+      html += `</div>`;
 
       // Backtesting — geçmiş ayların tahmin doğruluğu
       if (sd.backtesting && sd.backtesting.length > 0) {
@@ -1894,6 +1922,12 @@ function render() {
     html += `<div style="padding:8px;border-radius:8px;background:rgba(255,255,255,0.03)"><div style="font-size:9px;color:#64748b">Demet</div><div style="font-size:15px;font-weight:800;color:#f8fafc">${rStats.td}</div></div>`;
     html += `<div style="padding:8px;border-radius:8px;background:rgba(255,255,255,0.03)"><div style="font-size:9px;color:#64748b">Dm Başı Net</div><div style="font-size:15px;font-weight:800;color:#f8fafc">${fmt2(rStats.av)}</div></div>`;
     html += `</div>`;
+
+    // V2 gerçek kesinti satırı (dönemde V2 verisi varsa)
+    const rV2 = getV2Ozet(filtered);
+    if (rV2.kesintiPct !== null) {
+      html += `<div style="padding:6px 10px;border-radius:8px;background:rgba(168,85,247,0.08);border:1px solid rgba(168,85,247,0.15);margin-bottom:12px;font-size:11px;color:#c4b5fd">💸 Gerçek kesinti oranı: <strong>%${rV2.kesintiPct.toFixed(1)}</strong></div>`;
+    }
 
     // Önceki dönem — ÜÇ DELTA birlikte
     if (rData.hasPrev) {
