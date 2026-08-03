@@ -150,7 +150,7 @@ function render() {
   html += `</div>`;
 
   // Tabs
-  const tabList = [{id:"panel",l:"Panel",i:"◉"},{id:"plan",l:"Planlayıcı",i:"🎯"},{id:"sube",l:"Şube Tablosu",i:"📋"},{id:"compare",l:"Karşılaştır",i:"⚡"},{id:"heat",l:"Kâr Haritası",i:"🔥"},{id:"tablo",l:"Tablo",i:"☰"},{id:"rapor",l:"Rapor",i:"📄"},{id:"ai",l:"AI",i:"✦"},{id:"yoy",l:"Geçen Yıl",i:"📊"},{id:"mevsim",l:"Mevsimsellik",i:"🗓"},{id:"cicekanaliz",l:"Çiçek Analiz",i:"🌷"},{id:"tahtrend",l:"Tahmin & Risk",i:"🔮"}];
+  const tabList = [{id:"panel",l:"Panel",i:"◉"},{id:"plan",l:"Planlayıcı",i:"🎯"},{id:"sube",l:"Şube Tablosu",i:"📋"},{id:"compare",l:"Karşılaştır",i:"⚡"},{id:"heat",l:"Kâr Haritası",i:"🔥"},{id:"tablo",l:"Tablo",i:"☰"},{id:"rapor",l:"Rapor",i:"📄"},{id:"ai",l:"AI",i:"✦"},{id:"yoy",l:"Geçen Yıl",i:"📊"},{id:"mevsim",l:"Mevsimsellik",i:"🗓"},{id:"cicekanaliz",l:"Çiçek Analiz",i:"🌷"},{id:"tahtrend",l:"Tahmin & Risk",i:"🔮"},{id:"gider",l:"Giderler",i:"💸"}];
   html += `<div class="tabs">`;
   tabList.forEach(t => {
     html += `<button class="tab-btn ${state.tab===t.id?'active':''}" onclick="setState({tab:'${t.id}',ddOpen:null})">${t.i} ${t.l}</button>`;
@@ -1900,6 +1900,141 @@ function render() {
       subeGuvenilirlik.forEach((s,i) => {
         html += `<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-top:${i>0?'1px solid rgba(255,255,255,0.03)':'none'}"><div style="width:18px;font-size:10px;font-weight:700;color:${i<3?'#fbbf24':'#475569'}">${i+1}</div><div style="flex:1"><div style="font-size:12px;font-weight:600;color:#e2e8f0">${esc(s.sube)}</div><div style="font-size:9px;color:#475569">${s.aktifAylar} ay · ${new Intl.NumberFormat("tr-TR").format(s.toplamD)}dm</div></div><div style="text-align:right"><div style="font-size:14px;font-weight:800;color:${s.guvenColor}">${s.guvenScore}</div><div style="font-size:8px;color:${s.guvenColor}">${s.guvenLabel}</div></div></div>`;
       });
+      html += `</div>`;
+    }
+  }
+
+  // ══ GİDERLER (Cost Model v2) ══
+  if (state.tab === "gider") {
+    const v2rows = filtered.filter(r => r.costModel === "v2");
+    html += `<div class="sec-title">Gider Analizi</div>`;
+
+    if (v2rows.length === 0) {
+      html += `<div class="card" style="background:rgba(250,204,21,0.06);border-color:rgba(250,204,21,0.12);text-align:center;padding:30px"><div style="font-size:14px;color:#fbbf24;margin-bottom:6px">Bu sekme 31 Temmuz 2026 sonrası veriyle çalışır</div><div style="font-size:12px;color:#94a3b8">Tarih aralığını 31 Tem 2026 veya sonrasını kapsayacak şekilde seç.</div></div>`;
+    } else {
+      const gs = getGiderStats(v2rows);
+      html += `<div style="font-size:12px;color:#94a3b8;margin-bottom:14px;margin-top:-6px">${v2rows.length} satır · Toplam gider: ${fmt(gs.toplamGider)} · Ort. kesinti: <span style="color:#c4b5fd;font-weight:600">%${gs.ortKesinti.toFixed(1)}</span></div>`;
+
+      // ── Bölüm 1: Gider Kalemi Dağılımı ──
+      html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:10px">📊 Gider Kalemi Dağılımı</div>`;
+      const maxKalem = gs.kalemler[0] ? gs.kalemler[0].toplam : 1;
+      gs.kalemler.forEach((k, i) => {
+        const w = maxKalem > 0 ? (k.toplam / maxKalem * 100) : 0;
+        html += `<div style="padding:5px 0;border-top:${i > 0 ? '1px solid rgba(255,255,255,0.03)' : 'none'}">`;
+        html += `<div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="font-size:11px;color:#cbd5e1">${k.ad}</span><span style="font-size:11px"><span style="color:#fbbf24;font-size:9px">%${k.pay.toFixed(1)}</span> · <span style="color:#e2e8f0;font-weight:600">${fmt(k.toplam)}</span></span></div>`;
+        html += `<div style="height:4px;background:rgba(255,255,255,0.04);border-radius:2px"><div style="height:100%;border-radius:2px;width:${w}%;background:linear-gradient(90deg,#a855f7,#7c3aed)"></div></div>`;
+        html += `</div>`;
+      });
+      html += `</div>`;
+
+      // ── Bölüm 2: Şube Nakliye Tablosu ──
+      html += `<div class="card" style="margin-bottom:14px;padding:0;overflow:hidden;overflow-x:auto"><div style="font-size:13px;font-weight:700;color:#f8fafc;padding:12px 14px 8px">🚚 Şube Nakliye Maliyeti</div>`;
+      html += `<table style="width:100%;border-collapse:collapse;font-size:10px;min-width:420px">`;
+      html += `<thead><tr style="border-bottom:1px solid rgba(255,255,255,0.08)">`;
+      ["Şube", "Nakliye", "Satır", "₺/Satır", "₺/Dm", "Brüte %"].forEach((h, i) => {
+        html += `<th style="padding:6px ${i === 0 ? '14px' : '6px'};text-align:${i === 0 ? 'left' : 'right'};color:#64748b;font-size:8px;text-transform:uppercase;font-weight:600">${h}</th>`;
+      });
+      html += `</tr></thead><tbody>`;
+      const ortPerDemet = gs.subeNakliye.length > 0 ? gs.subeNakliye.reduce((s, b) => s + b.perDemet, 0) / gs.subeNakliye.length : 0;
+      gs.subeNakliye.forEach((b, i) => {
+        const pahali = b.perDemet > ortPerDemet * 1.15;
+        const ucuz = b.perDemet < ortPerDemet * 0.85;
+        const renk = pahali ? "#f87171" : ucuz ? "#34d399" : "#e2e8f0";
+        html += `<tr style="border-bottom:1px solid rgba(255,255,255,0.03);background:${pahali ? 'rgba(239,68,68,0.05)' : 'transparent'}">`;
+        html += `<td style="padding:7px 14px;color:#f8fafc;font-weight:500">${esc(b.sube)}</td>`;
+        html += `<td style="padding:7px 6px;text-align:right;color:#cbd5e1">${fmt(b.nakliye)}</td>`;
+        html += `<td style="padding:7px 6px;text-align:right;color:#94a3b8">${b.satir}</td>`;
+        html += `<td style="padding:7px 6px;text-align:right;color:#cbd5e1">${fmt2(b.perSatir)}</td>`;
+        html += `<td style="padding:7px 6px;text-align:right;color:${renk};font-weight:700">${fmt2(b.perDemet)}</td>`;
+        html += `<td style="padding:7px 6px;text-align:right;color:${renk}">${b.brutPct.toFixed(1)}%</td>`;
+        html += `</tr>`;
+      });
+      html += `</tbody></table></div>`;
+
+      // ── Bölüm 3: Kesinti Oranı Trendi ──
+      html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:4px">📈 Kesinti Oranı Trendi</div>`;
+      html += `<div style="font-size:9px;color:#64748b;margin-bottom:10px">Mezat günü bazlı gerçek kesinti · Ortalama: %${gs.ortKesinti.toFixed(1)}</div>`;
+      const maxPct = Math.max(...gs.gunler.map(g => g.pct), gs.ortKesinti) * 1.15;
+      html += `<div style="position:relative;height:80px;display:flex;align-items:flex-end;gap:4px">`;
+      html += `<div style="position:absolute;left:0;right:0;bottom:${maxPct > 0 ? (gs.ortKesinti / maxPct * 80) : 0}px;border-top:1px dashed rgba(196,181,253,0.5);z-index:1"><span style="position:absolute;right:0;top:-12px;font-size:7px;color:#c4b5fd">ort %${gs.ortKesinti.toFixed(1)}</span></div>`;
+      gs.gunler.forEach(g => {
+        const h = maxPct > 0 ? Math.max(3, g.pct / maxPct * 80) : 3;
+        html += `<div style="flex:1;text-align:center;position:relative;z-index:2"><div style="font-size:8px;color:#c4b5fd;font-weight:600;margin-bottom:2px">%${g.pct.toFixed(1)}</div><div style="height:${h}px;border-radius:3px 3px 1px 1px;background:linear-gradient(to top,rgba(168,85,247,0.25),rgba(168,85,247,0.5));margin-bottom:3px"></div><div style="font-size:7px;color:#475569">${fD(g.t)}</div></div>`;
+      });
+      html += `</div></div>`;
+
+      // ── Bölüm 4: Minimum Kârlı Sevkiyat ──
+      html += `<div class="card" style="margin-bottom:14px;background:rgba(250,204,21,0.04);border-color:rgba(250,204,21,0.1)"><div style="font-size:13px;font-weight:700;color:#fbbf24;margin-bottom:4px">⭐ Minimum Kârlı Sevkiyat</div>`;
+      html += `<div style="font-size:9px;color:#64748b;margin-bottom:10px">Satır büyüklüğü küçüldükçe nakliye payı artar — kesinti oranı yükselir</div>`;
+      const gSubeler = [...new Set(v2rows.map(r => r.s))].sort();
+      html += `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px">`;
+      html += `<button class="preset-btn ${state.giderSube === null ? 'active' : ''}" onclick="setState({giderSube:null})">Tümü</button>`;
+      gSubeler.forEach(s => {
+        html += `<button class="preset-btn ${state.giderSube === s ? 'active' : ''}" onclick="setState({giderSube:'${esc(s)}'})">${esc(s)}</button>`;
+      });
+      html += `</div>`;
+      const arRows = state.giderSube ? v2rows.filter(r => r.s === state.giderSube) : v2rows;
+      const araliklar = getGiderAralik(arRows);
+      html += `<table style="width:100%;border-collapse:collapse;font-size:11px">`;
+      html += `<thead><tr style="border-bottom:1px solid rgba(255,255,255,0.08)">`;
+      ["Aralık", "Satır", "Ort. Kesinti", "Ort. Net/Dm"].forEach((h, i) => {
+        html += `<th style="padding:6px 4px;text-align:${i === 0 ? 'left' : 'right'};color:#64748b;font-size:8px;text-transform:uppercase;font-weight:600">${h}</th>`;
+      });
+      html += `</tr></thead><tbody>`;
+      araliklar.forEach(a => {
+        const kesintiRenk = a.ortKesinti === null ? "#475569" : a.ortKesinti > 40 ? "#f87171" : a.ortKesinti > 30 ? "#fbbf24" : "#34d399";
+        html += `<tr style="border-bottom:1px solid rgba(255,255,255,0.03)">`;
+        html += `<td style="padding:7px 4px;color:#f8fafc;font-weight:600">${a.ad}</td>`;
+        html += `<td style="padding:7px 4px;text-align:right;color:#94a3b8">${a.n}</td>`;
+        html += `<td style="padding:7px 4px;text-align:right;color:${kesintiRenk};font-weight:700">${a.ortKesinti !== null ? '%' + a.ortKesinti.toFixed(1) : '—'}</td>`;
+        html += `<td style="padding:7px 4px;text-align:right;color:#e2e8f0">${a.ortNetDm !== null ? fmt2(a.ortNetDm) : '—'}</td>`;
+        html += `</tr>`;
+      });
+      html += `</tbody></table>`;
+      const dolu = araliklar.filter(a => a.n > 0 && a.ortKesinti !== null);
+      if (dolu.length > 0) {
+        const enKotu = dolu.reduce((mx, a) => a.ortKesinti > mx.ortKesinti ? a : mx, dolu[0]);
+        html += `<div style="font-size:10px;color:#94a3b8;margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.04)">En yüksek kesinti <strong style="color:#fbbf24">${enKotu.ad}</strong> aralığında (%${enKotu.ortKesinti.toFixed(1)}).${enKotu.ortKesinti > 40 ? ' <span style="color:#f87171">⚠ %40 üstü kesinti oranına dikkat — bu boyuttaki sevkiyatlarda nakliye kârı eritiyor.</span>' : ''}</div>`;
+      }
+      html += `</div>`;
+
+      // ── Bölüm 5: Zarar Kayıtları ──
+      const zarar = getZararFiltered();
+      html += `<div class="sec-title">Zarar Kayıtları</div>`;
+      if (zarar.length === 0) {
+        html += `<div class="card" style="margin-bottom:14px;text-align:center;padding:16px"><div style="font-size:12px;color:#34d399">✓ Dönemde zarar kaydı yok</div></div>`;
+      } else {
+        const zToplam = zarar.reduce((s, r) => s + r.net, 0);
+        html += `<div class="card" style="margin-bottom:8px;background:rgba(239,68,68,0.08);border-color:rgba(239,68,68,0.2);text-align:center;padding:14px"><div style="font-size:10px;color:#fca5a5;margin-bottom:2px">⚠ ${zarar.length} zarar kaydı (net ≤ 0 — analize girmez)</div><div style="font-size:20px;font-weight:800;color:#f87171">−${fmt(Math.abs(zToplam))}</div></div>`;
+        const zShow = state.expanded.giderZarar ? 999 : 10;
+        html += `<div class="card" style="margin-bottom:14px;padding:0;overflow:hidden;overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:10px;min-width:420px">`;
+        html += `<thead><tr style="border-bottom:1px solid rgba(255,255,255,0.08)">`;
+        ["Tarih", "Şube", "Çiçek", "Brüt", "Nak. Zarar", "Net"].forEach((h, i) => {
+          html += `<th style="padding:6px ${i === 0 ? '14px' : '6px'};text-align:${i < 3 ? 'left' : 'right'};color:#64748b;font-size:8px;text-transform:uppercase;font-weight:600">${h}</th>`;
+        });
+        html += `</tr></thead><tbody>`;
+        zarar.slice(0, zShow).forEach(r => {
+          html += `<tr style="border-bottom:1px solid rgba(255,255,255,0.03)">`;
+          html += `<td style="padding:6px 14px;color:#94a3b8">${fD(r.t)}</td>`;
+          html += `<td style="padding:6px;color:#cbd5e1">${esc(r.s)}</td>`;
+          html += `<td style="padding:6px;color:#cbd5e1">${esc(r.c)}</td>`;
+          html += `<td style="padding:6px;text-align:right;color:#94a3b8">${fmt2(r.ciro)}</td>`;
+          html += `<td style="padding:6px;text-align:right;color:#fbbf24">${fmt2(r.giderler.nakliyeZarar)}</td>`;
+          html += `<td style="padding:6px;text-align:right;color:#f87171;font-weight:700">${fmt2(r.net)}</td>`;
+          html += `</tr>`;
+        });
+        html += `</tbody></table></div>`;
+        if (zarar.length > 10) html += `<button class="show-more" onclick="toggleExp('giderZarar')">${state.expanded.giderZarar ? 'Daha az ▲' : 'Tüm zarar kayıtları (' + zarar.length + ') ▼'}</button>`;
+      }
+
+      // ── Bölüm 6: Vergi/Muhasebe Özeti ──
+      html += `<div class="sec-title">Vergi & Muhasebe Özeti</div>`;
+      html += `<div class="card" style="margin-bottom:14px">`;
+      [["Bağkur Payı", gs.vergi.bagkur], ["Stopaj Payı", gs.vergi.stopaj], ["Borsa Payı", gs.vergi.borsa]].forEach(([ad, v], i) => {
+        html += `<div style="display:flex;justify-content:space-between;padding:6px 0;border-top:${i > 0 ? '1px solid rgba(255,255,255,0.03)' : 'none'}"><span style="font-size:11px;color:#cbd5e1">${ad}</span><span style="font-size:11px;color:#e2e8f0;font-weight:600">${fmt2(v)}</span></div>`;
+      });
+      html += `<div style="display:flex;justify-content:space-between;padding:8px 0 2px;border-top:1px solid rgba(255,255,255,0.08)"><span style="font-size:12px;color:#f8fafc;font-weight:700">Toplam</span><span style="font-size:12px;color:#4ade80;font-weight:800">${fmt2(gs.vergi.bagkur + gs.vergi.stopaj + gs.vergi.borsa)}</span></div>`;
+      html += `<div style="font-size:9px;color:#64748b;margin-top:8px">📋 Muhasebe için — dönem: ${dateLabel}</div>`;
       html += `</div>`;
     }
   }

@@ -26,6 +26,75 @@ function getZararFiltered() {
   });
 }
 
+// Satır büyüklüğü aralıkları × kesinti analizi (Giderler sekmesi böl. 4)
+function getGiderAralik(rows) {
+  const araliklar = [
+    { ad: "1-5 dm", min: 1, max: 5, n: 0, gider: 0, ciro: 0, net: 0, d: 0 },
+    { ad: "6-10 dm", min: 6, max: 10, n: 0, gider: 0, ciro: 0, net: 0, d: 0 },
+    { ad: "11-20 dm", min: 11, max: 20, n: 0, gider: 0, ciro: 0, net: 0, d: 0 },
+    { ad: "21+ dm", min: 21, max: Infinity, n: 0, gider: 0, ciro: 0, net: 0, d: 0 }
+  ];
+  rows.forEach(r => {
+    const a = araliklar.find(x => r.d >= x.min && r.d <= x.max);
+    if (!a) return;
+    a.n++; a.gider += r.toplamGider; a.ciro += r.ciro; a.net += r.net; a.d += r.d;
+  });
+  return araliklar.map(a => ({
+    ad: a.ad, n: a.n,
+    ortKesinti: a.ciro > 0 ? (a.gider / a.ciro * 100) : null,
+    ortNetDm: a.d > 0 ? (a.net / a.d) : null
+  }));
+}
+
+// Giderler sekmesi ana istatistikleri — SADECE v2 satırlarla çağrılır
+function getGiderStats(v2rows) {
+  const kalemTanim = [
+    { key: "koop", ad: "Koop Gider" },
+    { key: "nakliye", ad: "Nakliye" },
+    { key: "bagkur", ad: "Bağkur" },
+    { key: "stopaj", ad: "Stopaj" },
+    { key: "hamaliye", ad: "Hamaliye" },
+    { key: "borsa", ad: "Borsa" },
+    { key: "nakliyeZarar", ad: "Nakliye Zarar" }
+  ];
+  const toplamlar = {};
+  kalemTanim.forEach(k => toplamlar[k.key] = 0);
+  let toplamGider = 0, toplamCiro = 0;
+  const subeM = {}, gunM = {};
+
+  v2rows.forEach(r => {
+    kalemTanim.forEach(k => toplamlar[k.key] += r.giderler[k.key]);
+    toplamGider += r.toplamGider; toplamCiro += r.ciro;
+    if (!subeM[r.s]) subeM[r.s] = { nakliye: 0, n: 0, d: 0, ciro: 0 };
+    subeM[r.s].nakliye += r.giderler.nakliye; subeM[r.s].n++; subeM[r.s].d += r.d; subeM[r.s].ciro += r.ciro;
+    if (!gunM[r.t]) gunM[r.t] = { gider: 0, ciro: 0 };
+    gunM[r.t].gider += r.toplamGider; gunM[r.t].ciro += r.ciro;
+  });
+
+  const kalemler = kalemTanim.map(k => ({
+    ad: k.ad, toplam: toplamlar[k.key],
+    pay: toplamGider > 0 ? (toplamlar[k.key] / toplamGider * 100) : 0
+  })).sort((a, b) => b.toplam - a.toplam);
+
+  const subeNakliye = Object.entries(subeM).map(([s, v]) => ({
+    sube: s, nakliye: v.nakliye, satir: v.n,
+    perSatir: v.n > 0 ? v.nakliye / v.n : 0,
+    perDemet: v.d > 0 ? v.nakliye / v.d : 0,
+    brutPct: v.ciro > 0 ? (v.nakliye / v.ciro * 100) : 0
+  })).sort((a, b) => b.perDemet - a.perDemet);
+
+  const gunler = Object.entries(gunM).sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([t, v]) => ({ t, pct: v.ciro > 0 ? (v.gider / v.ciro * 100) : 0 }));
+
+  return {
+    kalemler, toplamGider, toplamCiro,
+    ortKesinti: toplamCiro > 0 ? (toplamGider / toplamCiro * 100) : 0,
+    subeNakliye, gunler,
+    araliklar: getGiderAralik(v2rows),
+    vergi: { bagkur: toplamlar.bagkur, stopaj: toplamlar.stopaj, borsa: toplamlar.borsa }
+  };
+}
+
 function getFiltered() {
   return ALL_DATA.filter(r => {
     if (r.t < state.sd || r.t > state.ed) return false;

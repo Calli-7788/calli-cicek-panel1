@@ -32,7 +32,8 @@ window.state = {
   mevsimDetail: null,
   caSecim: null,
   caSearch: "",
-  riskGruplar: null
+  riskGruplar: null,
+  giderSube: null  // Giderler sekmesi böl.4 şube filtresi
 };
 
 function setState(updates) {
