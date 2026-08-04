@@ -26,6 +26,9 @@ window.state = {
   planBranchMode: "auto", // "auto", "manual", "explore"
   planManualBranches: [], // selected branch names for manual mode
   planResult: null,
+  planDagilim: null,      // marjinal tahsis çıktısı [{cicek,sube,kutu,demet,tahminiDbn,...}]
+  planBeklet: null,       // tahsis edilemeyen demetler [{cicek,demet,sebep}]
+  planTahminiNet: 0,      // dağılım bazlı toplam tahmini net
   planLoading: false,
   mevsimSearch: "",
   mevsimFilter: "aktif",

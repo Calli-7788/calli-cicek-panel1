@@ -19,6 +19,10 @@ window.GIDER = 0.20;
 // V2 kesim tarihi: bu tarih (dahil) ve sonrası SADECE GUNCEL_V2'den okunur
 window.V2_CUTOFF = "2026-07-31";
 
+// Marjinal tahsis doygunluk çarpanları (Planlayıcı Evrimi — Faz B)
+// atanan ≤ median → 1.00 | median–P75 lineer → 0.85 | P75–max lineer → 0.70 | > max → kombo kapanır
+window.PLANNER_SATURATION = { medianCarpan: 1.0, p75Carpan: 0.85, maxCarpan: 0.70 };
+
 // ═══════════════ MEVSİMSELLİK ═══════════════
 window.OZEL_GUNLER = [
   { tarih: "01-01", ad: "Yılbaşı", oncesi: 7 },

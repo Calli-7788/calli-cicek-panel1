@@ -1,4 +1,26 @@
-// ═══════════════ PLANLAYICI (DOKUNULMAZ) ═══════════════
+// ═══════════════ PLANLAYICI — MARJİNAL TAHSİS MOTORU ═══════════════
+// Faz B (Planlayıcı Evrimi): kutu-kutu marjinal atama.
+// Korunan: katmanlı fiyat skoru (%45 son2 + %25 son6-8 + %20 genel + %10 geçen yıl),
+// güven skoru (örnek %30 + güncellik %35 + oynaklık %35), absorpsiyon (median/P75/max/son60),
+// şube seçim modları, AI anlatım katmanı.
+// Kalkan: GÖNDER/AZALT/GÖNDERME yüzde eşikleri ve genel-ortalama-bazlı tahmini net —
+// yerine doygunluk + belirsizlik cezası + durma mantığı (ekonomik ikame).
+
+// Doygunluk çarpanı: o komboya şu ana dek atanan demete göre marjinal değer düşer.
+// atanan > max → null (kombo kapanır).
+function saturationCarpan(atanan, median, p75, mx) {
+  var S = window.PLANNER_SATURATION;
+  if (atanan <= median) return S.medianCarpan;
+  if (atanan <= p75) {
+    if (p75 <= median) return S.p75Carpan;
+    return S.medianCarpan + (S.p75Carpan - S.medianCarpan) * (atanan - median) / (p75 - median);
+  }
+  if (atanan <= mx) {
+    if (mx <= p75) return S.maxCarpan;
+    return S.p75Carpan + (S.maxCarpan - S.p75Carpan) * (atanan - p75) / (mx - p75);
+  }
+  return null;
+}
 
 async function handlePlan() {
   if (state.planFlowers.length === 0 || state.planLoading) return;
@@ -8,10 +30,12 @@ async function handlePlan() {
   }
   state.planLoading = true;
   state.planResult = null;
+  state.planDagilim = null;
+  state.planBeklet = null;
+  state.planTahminiNet = 0;
   render();
 
   var filtered = getFiltered();
-  var stats = calcStats(filtered);
   var hd = getHeatData(filtered);
 
   // ── 2026 Recent data (last 14 days) for trends ──
@@ -24,7 +48,14 @@ async function handlePlan() {
 
   var trendInfo = "\nSEÇİLİ DÖNEM: " + fD(state.sd) + " – " + fD(state.ed);
 
-  // ── Per flower: price ranking + last 2 auction filter + 2025 data ──
+  // Strateji → belirsizlik ceza katsayısı (yeni rol)
+  var stratejiK = state.planStrategy === "safe" ? 1.0 : state.planStrategy === "balanced" ? 0.5 : 0.2;
+
+  var dagilim = [];
+  var beklet = [];
+  var kesifPlanSayisi = 0;  // plan başına en çok 2 keşif kutusu (tüm çiçekler toplamı)
+
+  // ── Per flower: metrikler + marjinal tahsis ──
   state.planFlowers.forEach(function(pf) {
     var flowerFiltered = filtered.filter(function(r){ return r.c === pf.name });
     var flowerRecent = recentData.filter(function(r){ return r.c === pf.name });
@@ -62,10 +93,22 @@ async function handlePlan() {
       branch2025[r.s].net += r.net; branch2025[r.s].d += r.d;
     });
 
-    var branchRanked = Object.entries(byBranch).map(function(e){
-      var avgDbn = e[1].d > 0 ? e[1].net / e[1].d : 0;
+    // Aday şube listesi — şube moduna göre
+    var adayIsimler;
+    if (state.planBranchMode === "manual") {
+      adayIsimler = state.planManualBranches.slice();
+    } else {
+      adayIsimler = Object.keys(byBranch);
+      if (state.planBranchMode === "explore") {
+        Object.keys(branch2025).forEach(function(b){ if (adayIsimler.indexOf(b) === -1) adayIsimler.push(b); });
+      }
+    }
 
-      var days = Object.entries(dailyByBranch[e[0]] || {}).sort(function(a,b){return a[0].localeCompare(b[0])});
+    var branchRanked = adayIsimler.map(function(bName){
+      var bd = byBranch[bName] || {net:0,d:0};
+      var avgDbn = bd.d > 0 ? bd.net / bd.d : 0;
+
+      var days = Object.entries(dailyByBranch[bName] || {}).sort(function(a,b){return a[0].localeCompare(b[0])});
       var trendPct = 0;
       if (days.length >= 2) {
         var fH = days.slice(0, Math.floor(days.length/2));
@@ -75,16 +118,17 @@ async function handlePlan() {
         trendPct = fA > 0 ? ((sA - fA) / fA * 100) : 0;
       }
 
-      var last2Data = last2ByBranch[e[0]];
+      var last2Data = last2ByBranch[bName];
       var last2Dbn = last2Data && last2Data.d > 0 ? last2Data.net / last2Data.d : null;
 
       var midDates = uniqueDates.slice(0, Math.min(8, uniqueDates.length));
-      var midData = flowerRecent.filter(function(r){ return midDates.includes(r.t) && r.s === e[0] });
+      var midData = flowerRecent.filter(function(r){ return midDates.includes(r.t) && r.s === bName });
       var midDbn = midData.reduce(function(s,r){return s+r.d},0) > 0 ? midData.reduce(function(s,r){return s+r.net},0) / midData.reduce(function(s,r){return s+r.d},0) : null;
 
-      var hist = branch2025[e[0]];
+      var hist = branch2025[bName];
       var histDbn = hist && hist.d > 0 ? hist.net / hist.d : 0;
 
+      // Katmanlı fiyat skoru (45/25/20/10) — KORUNDU
       var skorDbn = 0;
       var skorAgirliktoplam = 0;
       if (last2Dbn !== null && last2Dbn > 0) { skorDbn += last2Dbn * 0.45; skorAgirliktoplam += 0.45; }
@@ -93,16 +137,20 @@ async function handlePlan() {
       if (histDbn > 0) { skorDbn += histDbn * 0.10; skorAgirliktoplam += 0.10; }
       var filtreSkoru = skorAgirliktoplam > 0 ? skorDbn / skorAgirliktoplam : avgDbn;
 
-      var komboData = ALL_DATA.filter(function(r){ return r.c === pf.name && r.s === e[0] });
+      // Absorpsiyon istatistikleri (tüm veri, mezat günü bazlı) — KORUNDU
+      var komboData = ALL_DATA.filter(function(r){ return r.c === pf.name && r.s === bName });
       var komboGunluk = {};
       komboData.forEach(function(r){ if(!komboGunluk[r.t]) komboGunluk[r.t] = 0; komboGunluk[r.t] += r.d; });
       var komboVals = Object.values(komboGunluk).sort(function(a,b){return a-b});
       var absMedian = komboVals.length > 0 ? komboVals[Math.floor(komboVals.length/2)] : 0;
       var absP75 = komboVals.length >= 4 ? komboVals[Math.floor(komboVals.length * 0.75)] : absMedian;
       var absMax = komboVals.length > 0 ? komboVals[komboVals.length-1] : 0;
-      var absSon60 = komboData.filter(function(r){ var d60=new Date(); d60.setDate(d60.getDate()-60); return r.t >= d60.toISOString().split("T")[0]; });
+      var d60 = new Date(); d60.setDate(d60.getDate()-60);
+      var d60str = d60.toISOString().split("T")[0];
+      var absSon60 = komboData.filter(function(r){ return r.t >= d60str });
       var absAlimSayisi = new Set(absSon60.map(function(r){return r.t})).size;
 
+      // Güven skoru (örnek %30 + güncellik %35 + oynaklık %35) — KORUNDU
       var ornekSayisi = komboVals.length;
       var sonSatis = komboData.length > 0 ? komboData.reduce(function(mx,r){return r.t>mx?r.t:mx},"") : "";
       var guncellik = 0;
@@ -121,113 +169,142 @@ async function handlePlan() {
       );
       var guvenLabel = guvenSkor >= 70 ? "Yüksek" : guvenSkor >= 40 ? "Orta" : "Düşük";
 
-      var azaltEsik, gondermeEsik;
-      if (state.planStrategy === "safe") {
-        azaltEsik = -15;
-        gondermeEsik = -30;
-      } else if (state.planStrategy === "balanced") {
-        azaltEsik = -25;
-        gondermeEsik = -40;
-      } else {
-        azaltEsik = -35;
-        gondermeEsik = -50;
+      // Belirsizlik: son dönem CV (son 60 gün; yetersizse tüm kombo verisi; ≤2 örnek → 1)
+      var cvRows = absSon60.filter(function(r){ return r.d > 0 });
+      if (cvRows.length < 3) cvRows = komboData.filter(function(r){ return r.d > 0 });
+      var cv = 1;
+      if (cvRows.length >= 3) {
+        var cvFiyat = cvRows.map(function(r){ return r.net / r.d });
+        var cvOrt = cvFiyat.reduce(function(s,x){return s+x},0) / cvFiyat.length;
+        var cvStd = Math.sqrt(cvFiyat.reduce(function(s,x){return s+Math.pow(x-cvOrt,2)},0) / cvFiyat.length);
+        cv = cvOrt > 0 ? cvStd / cvOrt : 1;
       }
 
-      var status = "GÖNDER";
-      var statusReason = "";
+      // Ayarlı skor: belirsizlik cezası strateji katsayısıyla
+      var ayarliSkor = filtreSkoru * (1 - stratejiK * Math.min(1, cv));
 
-      if (filtreSkoru > 0 && genelOrtalama > 0) {
-        var fark = ((filtreSkoru - genelOrtalama) / genelOrtalama * 100);
-        if (fark < gondermeEsik) {
-          status = "GÖNDERME";
-          statusReason = "Filtre skoru ortalamanın %" + Math.abs(fark).toFixed(0) + " altında (eşik: %" + Math.abs(gondermeEsik) + ")";
-        } else if (fark < azaltEsik) {
-          status = "AZALT";
-          statusReason = "Filtre skoru ortalamanın %" + Math.abs(fark).toFixed(0) + " altında (eşik: %" + Math.abs(azaltEsik) + "), demet yarıya düşür";
-        }
-      } else if (last2Dbn === null && midDbn === null) {
-        if (avgDbn > 0 && genelOrtalama > 0) {
-          var genelFark = ((avgDbn - genelOrtalama) / genelOrtalama * 100);
-          if (genelFark < gondermeEsik) {
-            status = "GÖNDERME";
-            statusReason = "Genel ortalama çok düşük";
-          } else if (genelFark < azaltEsik) {
-            status = "AZALT";
-            statusReason = "Genel ortalama düşük";
-          }
-        }
-        statusReason += (statusReason ? " | " : "") + "Yakın dönem verisi yok, genel ortalamaya bakıldı";
-      }
-
-      return {name:e[0], dbn:avgDbn, d:e[1].d, trend:trendPct, histDbn:histDbn, last2Dbn:last2Dbn, midDbn:midDbn, filtreSkoru:filtreSkoru, status:status, statusReason:statusReason, absMedian:absMedian, absP75:absP75, absMax:absMax, absAlimSayisi:absAlimSayisi, guvenSkor:guvenSkor, guvenLabel:guvenLabel};
-    }).sort(function(a,b){ return b.dbn - a.dbn });
-
-    var totalPrice = branchRanked.filter(function(b){return b.status!=="GÖNDERME"}).reduce(function(s,b){return s+b.dbn},0);
+      return {name:bName, dbn:avgDbn, d:bd.d, trend:trendPct, histDbn:histDbn, last2Dbn:last2Dbn, midDbn:midDbn, filtreSkoru:filtreSkoru, cv:cv, ayarliSkor:ayarliSkor, absMedian:absMedian, absP75:absP75, absMax:absMax, absAlimSayisi:absAlimSayisi, guvenSkor:guvenSkor, guvenLabel:guvenLabel};
+    }).sort(function(a,b){ return b.ayarliSkor - a.ayarliSkor });
 
     trendInfo += "\n\n" + pf.name + " (" + pf.demet + " demet) — Genel ort: " + fmt(genelOrtalama) + "/dm";
     if (last2Dates.length > 0) trendInfo += " | Son 2 mezat: " + last2Dates.map(function(d){return fD(d)}).join(", ");
 
-    trendInfo += "\n  ŞUBE ANALİZİ (yüksekten düşüğe):";
-    branchRanked.forEach(function(b, idx) {
+    trendInfo += "\n  ŞUBE ANALİZİ (ayarlı skora göre):";
+    branchRanked.forEach(function(b) {
       var trendDir = b.trend > 3 ? "↑" : b.trend < -3 ? "↓" : "→";
       var histNote = b.histDbn > 0 ? " | 2025:" + fmt(b.histDbn) : "";
       var last2Note = b.last2Dbn !== null ? " | Son2mezat:" + fmt(b.last2Dbn) : " | Son2mezat:YOK";
-
-      var statusIcon = b.status === "GÖNDER" ? "✅" : b.status === "AZALT" ? "⚠️" : "❌";
-
-      var sugPct = 0;
-      if (b.status !== "GÖNDERME" && totalPrice > 0) {
-        sugPct = Math.round((b.dbn / totalPrice) * 100);
-        if (b.status === "AZALT") sugPct = Math.round(sugPct * 0.5);
-      }
-
-      trendInfo += "\n    " + statusIcon + " " + b.name + ": " + fmt(b.dbn) + "/dm (trend:" + trendDir + (b.trend>0?"+":"") + b.trend.toFixed(0) + "%" + last2Note + histNote + ") | Güven:" + b.guvenLabel + " | Absorpsiyon: median=" + b.absMedian + "dm, P75=" + b.absP75 + "dm, max=" + b.absMax + "dm, son60gün=" + b.absAlimSayisi + "alım";
-      if (b.status === "GÖNDERME") trendInfo += " → ❌ GÖNDERME: " + b.statusReason;
-      else if (b.status === "AZALT") trendInfo += " → ⚠️ AZALT (%" + sugPct + "): " + b.statusReason;
-      else trendInfo += " → ÖNERİ: %" + sugPct;
+      trendInfo += "\n    " + b.name + ": skor " + fmt(b.filtreSkoru) + "/dm → ayarlı " + fmt(b.ayarliSkor) + "/dm (CV:" + (b.cv*100).toFixed(0) + "%, trend:" + trendDir + (b.trend>0?"+":"") + b.trend.toFixed(0) + "%" + last2Note + histNote + ") | Güven:" + b.guvenLabel + " | Absorpsiyon: median=" + b.absMedian + "dm, P75=" + b.absP75 + "dm, max=" + b.absMax + "dm, son60gün=" + b.absAlimSayisi + "alım";
     });
 
     if (state.planBranchMode === "explore") {
-      var currentBranches = branchRanked.map(function(b){return b.name});
-      var potentialBranches = Object.entries(branch2025).filter(function(e){
-        return !currentBranches.includes(e[0]) && e[1].d > 0;
-      }).map(function(e){
-        return {name:e[0], dbn:e[1].d > 0 ? e[1].net / e[1].d : 0, d:e[1].d};
-      }).sort(function(a,b){return b.dbn - a.dbn});
-
-      if (potentialBranches.length > 0) {
-        trendInfo += "\n  🔍 DENEME POTANSİYELİ (2025'te var, 2026'da yok):";
-        potentialBranches.slice(0,5).forEach(function(b){
-          trendInfo += "\n    ⭐ " + b.name + ": 2025'te " + fmt(b.dbn) + "/dm (" + b.d + "dm)";
-        });
-      }
-
-      var lowVolume = branchRanked.filter(function(b){ return b.d <= 5 && b.dbn > 0 && b.status !== "GÖNDERME" });
+      var lowVolume = branchRanked.filter(function(b){ return b.d <= 5 && b.dbn > 0 });
       if (lowVolume.length > 0) {
-        trendInfo += "\n  🔍 AZ DENENMİŞ AMA İYİ FİYAT:";
+        trendInfo += "\n  🔍 AZ DENENMİŞ AMA VERİSİ OLAN:";
         lowVolume.forEach(function(b){
           trendInfo += "\n    ⭐ " + b.name + ": " + fmt(b.dbn) + "/dm (sadece " + b.d + "dm)";
         });
       }
     }
+
+    // ── MARJİNAL TAHSİS: kutu kutu en yüksek marjinal değere ata ──
+    var kutuSayisi = Math.ceil(pf.demet / state.planBoxSize);
+    var kutular = [];
+    for (var ki = 0; ki < kutuSayisi; ki++) {
+      kutular.push(ki === kutuSayisi - 1 ? pf.demet - state.planBoxSize * (kutuSayisi - 1) : state.planBoxSize);
+    }
+
+    var atananMap = {};
+    var atamalar = [];
+    for (var bi = 0; bi < kutular.length; bi++) {
+      var kutuDemet = kutular[bi];
+      var enIyi = null;
+
+      branchRanked.forEach(function(b) {
+        var atanan = atananMap[b.name] || 0;
+        // Düşük güven VEYA absorpsiyon verisi yok → ana tahsise girmez, yalnız keşif yolu.
+        // (Verisiz kombonun skoru 0 olduğundan keşif eşiğini de geçemez — fiilen dışarıda kalır.)
+        var yalnizKesif = b.guvenLabel === "Düşük" || b.absMax === 0;
+        if (!yalnizKesif) {
+          // Ana tahsis adayı — doygunluk çarpanı uygulanır
+          var carpan = saturationCarpan(atanan, b.absMedian, b.absP75, b.absMax);
+          if (carpan === null) return; // kombo kapandı (atanan > max)
+          var marjinal = b.ayarliSkor * carpan;
+          if (!enIyi || marjinal > enIyi.marjinal) enIyi = { b: b, marjinal: marjinal, carpan: carpan, kesif: false };
+        } else if (state.planStrategy === "aggressive" && kesifPlanSayisi < 2 && atanan === 0 &&
+                   genelOrtalama > 0 && b.filtreSkoru > genelOrtalama) {
+          // KEŞİF: güven düşük ama skor genel ortalamanın üstünde — en fazla 1 kutu
+          var marjinalK = b.ayarliSkor;
+          if (!enIyi || marjinalK > enIyi.marjinal) enIyi = { b: b, marjinal: marjinalK, carpan: 1.0, kesif: true };
+        }
+      });
+
+      var kalanDemet = 0;
+      if (!enIyi || enIyi.marjinal <= 0) {
+        for (var kj = bi; kj < kutular.length; kj++) kalanDemet += kutular[kj];
+        beklet.push({
+          cicek: pf.name, demet: kalanDemet,
+          sebep: !enIyi ? (branchRanked.length === 0 ? "veri yok" : "kapasite doldu") : "marjinal katkı ≤ 0"
+        });
+        break;
+      }
+
+      atamalar.push({ sube: enIyi.b.name, demet: kutuDemet, dbn: enIyi.marjinal, carpan: enIyi.carpan, kesif: enIyi.kesif, guven: enIyi.kesif ? "düşük" : enIyi.b.guvenLabel.toLocaleLowerCase("tr-TR") });
+      atananMap[enIyi.b.name] = (atananMap[enIyi.b.name] || 0) + kutuDemet;
+      if (enIyi.kesif) kesifPlanSayisi++;
+    }
+
+    // Atamaları kombo bazında birleştir → dagilim satırları
+    var subeAg = {};
+    atamalar.forEach(function(a) {
+      if (!subeAg[a.sube]) subeAg[a.sube] = { kutu: 0, demet: 0, net: 0, carpanAgirlikli: 0, kesif: false, guven: a.guven };
+      subeAg[a.sube].kutu++;
+      subeAg[a.sube].demet += a.demet;
+      subeAg[a.sube].net += a.demet * a.dbn;
+      subeAg[a.sube].carpanAgirlikli += a.carpan * a.demet;
+      if (a.kesif) subeAg[a.sube].kesif = true;
+    });
+    Object.entries(subeAg).sort(function(a,b){ return b[1].net - a[1].net }).forEach(function(e) {
+      var v = e[1];
+      dagilim.push({
+        cicek: pf.name, sube: e[0], kutu: v.kutu, demet: v.demet,
+        tahminiDbn: v.demet > 0 ? v.net / v.demet : 0,
+        tahminiNet: v.net,
+        guven: v.guven,
+        doygunlukCarpani: v.demet > 0 ? +(v.carpanAgirlikli / v.demet).toFixed(3) : 1,
+        kesifKutusu: v.kesif
+      });
+    });
   });
+
+  var tahminiToplamNet = dagilim.reduce(function(s,x){ return s + x.tahminiNet }, 0);
+  state.planDagilim = dagilim;
+  state.planBeklet = beklet;
+  state.planTahminiNet = tahminiToplamNet;
+
+  // ── Dağılım metni (AI context + yerel plan aynı kaynaktan) ──
+  var dagilimText = "\n\n=== HESAPLANAN DAĞILIM (kod tarafından, KESİN) ===";
+  state.planFlowers.forEach(function(pf) {
+    var rows = dagilim.filter(function(x){ return x.cicek === pf.name });
+    dagilimText += "\n" + pf.name + " (" + pf.demet + " dm):";
+    if (rows.length === 0) dagilimText += " atama yok";
+    rows.forEach(function(x) {
+      dagilimText += "\n  📦 " + x.sube + ": " + x.kutu + " kutu, " + x.demet + " dm × " + fmt(x.tahminiDbn) + "/dm = " + fmt(x.tahminiNet) + " (güven: " + x.guven + ", doygunluk: " + x.doygunlukCarpani.toFixed(2) + (x.kesifKutusu ? ", 🔍 KEŞİF" : "") + ")";
+    });
+  });
+  if (beklet.length > 0) {
+    dagilimText += "\nBEKLET:";
+    beklet.forEach(function(bk){ dagilimText += "\n  ⏸ " + bk.cicek + ": " + bk.demet + " dm — " + bk.sebep; });
+  }
+  dagilimText += "\nTAHMİNİ TOPLAM NET (dağılım bazlı): " + fmt(tahminiToplamNet);
 
   var branchModeText = "";
   if (state.planBranchMode === "auto") {
-    branchModeText = "\n\nŞUBE SEÇİM MODU: OTOMATİK\n" +
-      "Tüm şubelere kutu yapmak ZORUNDA DEĞİLSİN. Sadece kârlı olan şubeleri seç.\n" +
-      "Kural: En fazla 5-7 şubeye gönder. Fiyatı çok düşük olan şubeleri ATLA.\n" +
-      "Bir şubeye kutu yapmak için o şubenin dm başı net fiyatının, ortalama fiyatın en az %60'ı kadar olması gerekir.";
+    branchModeText = "\n\nŞUBE SEÇİM MODU: OTOMATİK — dağılım, seçili dönemde verisi olan şubeler arasından marjinal değere göre hesaplandı.";
   } else if (state.planBranchMode === "manual") {
-    branchModeText = "\n\nŞUBE SEÇİM MODU: MANUEL\n" +
-      "SADECE şu şubelere kutu yap, başka şubeye YAPMA: " + state.planManualBranches.join(", ") + "\n" +
-      "Bu şubeler arasında fiyat sıralamasına göre dağıt. En pahalıya en çok.";
+    branchModeText = "\n\nŞUBE SEÇİM MODU: MANUEL — dağılım SADECE şu şubelerle sınırlı hesaplandı: " + state.planManualBranches.join(", ");
   } else if (state.planBranchMode === "explore") {
-    branchModeText = "\n\nŞUBE SEÇİM MODU: DENEME\n" +
-      "Ana dağılımı kârlı şubelere yap (toplam demetin %85-90'ı).\n" +
-      "Kalan %10-15'i DENEME şubelerine ayır (2025'te iyi fiyat vermiş ama 2026'da az/hiç gönderilmemiş şubeler).\n" +
-      "Deneme şubelerine MAX 1-2 kutu. 2025 verilerinde iyi fiyat veren şubeleri tercih et.\n" +
-      "Deneme kutularını açıkça '🔍 DENEME' olarak işaretle ve nedenini 2025 verisiyle açıkla.";
+    branchModeText = "\n\nŞUBE SEÇİM MODU: DENEME — 2025'te satış olan ama bu dönem verisi olmayan şubeler de aday havuzuna katıldı.";
   }
 
   var hist2025Text = "";
@@ -237,7 +314,7 @@ async function handlePlan() {
       if(!hist25ByF[r.c]) hist25ByF[r.c]={net:0,d:0};
       hist25ByF[r.c].net+=r.net; hist25ByF[r.c].d+=r.d;
     });
-    hist2025Text = "\n\n2025 GEÇMİŞ VERİ (referans — %20 ağırlık ver, %80 güncel veriye bak):\n";
+    hist2025Text = "\n\n2025 GEÇMİŞ VERİ (referans):\n";
     hist2025Text += Object.entries(hist25ByF).map(function(e){
       return e[0] + ": " + fmt(e[1].d>0?e[1].net/e[1].d:0) + "/dm, " + e[1].d + "dm";
     }).join("; ");
@@ -294,10 +371,10 @@ async function handlePlan() {
       if (yuzdeler.length > 0) {
         var ortYuzde = yuzdeler.reduce(function(s,x){return s+x},0) / yuzdeler.length;
         mevsimselText += "\n  📊 Ortalama mevsimsel endeks: %" + ortYuzde.toFixed(0) + " (100=yıl ortalaması)";
-        if (ortYuzde > 110) mevsimselText += " → 🔥 Bu hafta tarihsel olarak YÜKSEK fiyat dönemi. Agresif olabilirsin.";
-        else if (ortYuzde > 100) mevsimselText += " → ✅ Bu hafta ortalamanın üstünde. Normal/dengeli strateji uygun.";
-        else if (ortYuzde > 90) mevsimselText += " → ⚡ Bu hafta ortalamaya yakın. Dikkatli ol.";
-        else mevsimselText += " → ⚠️ Bu hafta tarihsel olarak DÜŞÜK fiyat dönemi. Güvenli strateji önerilir, fazla risk alma.";
+        if (ortYuzde > 110) mevsimselText += " → 🔥 Bu hafta tarihsel olarak YÜKSEK fiyat dönemi.";
+        else if (ortYuzde > 100) mevsimselText += " → ✅ Bu hafta ortalamanın üstünde.";
+        else if (ortYuzde > 90) mevsimselText += " → ⚡ Bu hafta ortalamaya yakın.";
+        else mevsimselText += " → ⚠️ Bu hafta tarihsel olarak DÜŞÜK fiyat dönemi.";
       }
     }
 
@@ -329,94 +406,63 @@ async function handlePlan() {
 
   } catch(e) { mevsimselText = ""; }
 
+  // Strateji açıklamaları — yeni rol: belirsizlik ceza katsayısı + keşif davranışı
   var strategyDesc = {
-    safe: "GÜVENLİ STRATEJİ:\n" +
-      "• Filtre: Son 2 mezat ortalamanın %15+ altı → AZALT, %30+ altı → GÖNDERME\n" +
-      "• Şube sayısı: MAX 4-5 şube. Az ama emin olduğun yerlere.\n" +
-      "• Dağılım: 1.şube %40-45, 2.şube %25-30, 3.şube %15-20, geri kalan %5-10\n" +
-      "• Karar mantığı: MUTLAK FİYAT ağırlıklı. Trend'e çok bakma. Geçmişte kanıtlanmış, yeterli veri olan şubelere gönder.\n" +
+    safe: "GÜVENLİ (k=1.0):\n" +
+      "• Belirsizlik cezası TAM — oynak (yüksek CV) kombolar sert cezalandırılır, dağılım kanıtlanmış kombolara yoğunlaşır.\n" +
+      "• Keşif kutusu YOK.\n" +
       "• Felsefe: Az kazanayım ama kayıp riskim düşük olsun.",
-    balanced: "DENGELİ STRATEJİ:\n" +
-      "• Filtre: Son 2 mezat ortalamanın %25+ altı → AZALT, %40+ altı → GÖNDERME\n" +
-      "• Şube sayısı: 5-8 şube. Daha geniş yay ama hâlâ kontrollü.\n" +
-      "• Dağılım: 1.şube %30-35, 2.şube %20-25, 3.şube %15-20, 4-5.şube %10-15, kalan %5-10\n" +
-      "• Karar mantığı: Fiyat %60 ağırlık + Trend %40 ağırlık. İkisini dengele.\n" +
-      "• Felsefe: Makul risk, makul kazanç. Normal dağılım.",
-    aggressive: "AGRESİF STRATEJİ:\n" +
-      "• Filtre: Son 2 mezat ortalamanın %35+ altı → AZALT, %50+ altı → GÖNDERME\n" +
-      "• Şube sayısı: 6-10 şube. Geniş dağılım.\n" +
-      "• Dağılım: 1.şube %25-30, 2.şube %20-25, 3.şube %15-20, kalan şubeler %5-15 paylaşır (daha eşit dağılım)\n" +
-      "• Karar mantığı: Trend %60 ağırlık + Fiyat %40 ağırlık. Trendi YÜKSELEN şubelere ekstra şans ver. Fiyatı düşük ama hızla yükselen bir şube varsa güvenli modda görmezden gelinecek o şubeye de kutu yap.\n" +
-      "• Felsefe: Maksimum kazanç hedefle. Momentum yakala. Kayıp olabilir ama yukarı potansiyel büyük."
+    balanced: "DENGELİ (k=0.5):\n" +
+      "• Belirsizlik cezası ORTA — fiyat ile risk dengelenir.\n" +
+      "• Keşif kutusu YOK.\n" +
+      "• Felsefe: Makul risk, makul kazanç.",
+    aggressive: "AGRESİF (k=0.2):\n" +
+      "• Belirsizlik cezası DÜŞÜK — yüksek potansiyelli oynak kombolar şans bulur.\n" +
+      "• KEŞİF: absorpsiyon verisi olmayan ama skoru genel ortalamanın üstündeki kombolara en fazla 2 keşif kutusu (birer kutu).\n" +
+      "• Felsefe: Maksimum kazanç potansiyeli, kontrollü test."
   };
 
   var totalDemet = state.planFlowers.reduce(function(s,f){return s+f.demet},0);
   var totalKutu = Math.ceil(totalDemet / state.planBoxSize);
 
-  var planPrompt = "GÖREV: Çiçek gönderim planı oluştur.\n\n" +
+  var planPrompt = "GÖREV: Aşağıda kod tarafından hesaplanmış gönderim dağılımı var. Bu dağılımı GEREKÇELENDİR ve anlat.\n\n" +
     "KESİLEN ÇİÇEKLER:\n" + state.planFlowers.map(function(f){ return "- " + f.name + ": " + f.demet + " demet" }).join("\n") +
     "\nTOPLAM: " + totalDemet + " demet, " + totalKutu + " kutu (" + state.planBoxSize + " dm/kutu)" +
     "\n\nSTRATEJİ: " + strategyDesc[state.planStrategy] +
     branchModeText +
+    dagilimText +
     "\n\nGÜNCEL VERİLER:" + trendInfo +
     "\n\nKombo sıralaması: " + hd.slice(0,25).map(function(h){return h.cicek+"→"+h.sube+":"+fmt(h.dbn)+"/dm"}).join("; ") +
     hist2025Text +
     mevsimselText +
     "\n\n🚨 ZORUNLU KURALLAR:\n" +
-    "1. ❌ GÖNDERME etiketli çiçek-şube kombinasyonlarına KESİNLİKLE kutu yapma!\n" +
-    "2. ⚠️ AZALT etiketli kombinasyonlara önerilen yüzdenin YARISINI ver.\n" +
-    "3. ✅ GÖNDER etiketli kombinasyonlara önerilen yüzdeye göre dağıt.\n" +
-    "4. EN PAHALI şubeye EN ÇOK kutu!\n" +
-    "5. 🚨🚨🚨 HER ÇİÇEĞİN TOPLAM DEMETİ GİRİLEN MİKTARA BİREBİR EŞİT OLMALI! KALAN DEMET BIRAKMAK YASAK! Eğer kutulara tam sığmıyorsa son kutuyu eksik doldur veya en iyi şubeye ekstra kutu yap. Hiçbir demet boşta kalamaz!\n" +
-    "6. Kutu başına " + state.planBoxSize + " demet. Karışık çiçek konulabilir. Son kutu tam dolmak zorunda DEĞİL.\n" +
-    "7. UCUZ şubeye PAHALI şubeden fazla kutu YASAK!\n" +
-    "8. Geçmiş yıl verisi referans (%15 ağırlık), mevsimsel endeks bilgilendirme, güncel veri ana karar (%85). Mevsimsel uyarı varsa risk notunda belirt.\n" +
-    "9. Tüm şubelere kutu yapmak ZORUNLU DEĞİL.\n" +
-    "10. DAĞILIM DETAYI bölümünde her çiçeğin şubelere dağılımını yaz ve TOPLAMI KONTROL ET. Toplam girilen demete eşit değilse DÜZELT!\n" +
+    "1. HESAPLANAN DAĞILIM tablosu KESİNDİR — kutu/demet/şube sayılarını DEĞİŞTİRME, yeni kombo EKLEME, kombo ÇIKARMA.\n" +
+    "2. Görevin ANLATIM: her şube ataması için gerekçe (fiyat skoru, trend, güven, absorpsiyon), riskleri belirt.\n" +
+    "3. Rakam üretme — tahmini net rakamlarını dağılım tablosundan AYNEN kullan.\n" +
+    "4. 🔍 KEŞİF işaretli kutuları 'test gönderimi' olarak anlat, nedenini belirt.\n" +
+    "5. BEKLET listesi varsa: ertesi mezata bekletme veya bilinçli düşük fiyat kabulü seçeneklerini kısaca değerlendir.\n" +
     "\nÇIKTI FORMATI:\n" +
-    "📦 [ŞUBE] - [KUTU] kutu\n" +
-    "  Kutu X: [DM] dm [ÇİÇEK] (fiyat: X₺/dm, son2mezat: X₺, trend: +Y%)\n" +
-    (state.planBranchMode==="explore" ? "  🔍 DENEME kutularını ayrı belirt\n" : "") +
-    "\n📊 ÖZET (ZORUNLU — bu bölümü MUTLAKA yaz):\n" +
+    "📦 [ŞUBE] - [KUTU] kutu ([DEMET] dm [ÇİÇEK])\n" +
+    "  Gerekçe: fiyat/trend/güven kısa açıklama\n" +
+    "\n⏸ BEKLET (varsa): açıklama + öneri\n" +
+    "\n📊 ÖZET:\n" +
     "- Toplam: X kutu (Y demet)\n" +
-    "- Dağılım: şube1 %X, şube2 %Y...\n" +
-    "- TAHMİNİ NET GELİR: XXXXX ₺\n" +
-    "  (Hesaplama: Her şubeye giden demet × o çiçeğin o şubedeki dm başı net fiyat, toplamı al)\n" +
+    "- TAHMİNİ NET GELİR: " + fmt(tahminiToplamNet) + " (dağılım bazlı — bu rakamı aynen kullan)\n" +
     "- Risk notu\n" +
-    "- Elenen şubeler ve nedenleri";
+    "- Mevsimsel not (varsa)";
 
   try {
     var resp = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        system: "Sen çiçek mezat lojistik uzmanısın. Yalova'da üretici, Flora mezatına gönderiyor. Gider %20. Türkçe.\n\n" +
-          "EN ÖNEMLİ KURAL: ❌ GÖNDERME etiketli kombinasyonlara KESİNLİKLE kutu yapma!\n" +
-          "⚠️ AZALT etiketlilere yarı pay ver. ✅ GÖNDER etiketlilere normal dağıt.\n" +
-          "Tüm şubelere kutu yapmak ZORUNLU DEĞİL. Geçmiş yıl verisi %15 ağırlık.\n" +
-          "Her kutuya " + state.planBoxSize + " demet, karışık çiçek olabilir. Kesin sayılar ver.\n" +
-          "MEVSİMSEL ZEKA: Verilen mevsimsel endeks ve fiyat tahmini bilgilerini dikkate al. Eğer mevsimsel olarak düşük dönemdeysen risk notunda belirt. Özel gün yaklaşıyorsa fiyat artışı beklentisini plana yansıt.\n" +
-          "KESme çiçek üreticisi üretimi anlık artıramaz — sadece gönderim stratejisini optimize et.\n\n" +
-          (state.planStrategy === "safe" ?
-            "STRATEJİ DAVRANIŞI — GÜVENLİ:\n" +
-            "• Max 4-5 şubeye gönder. Sadece kanıtlanmış yerlere.\n" +
-            "• MUTLAK FİYAT ağırlıklı karar ver. Trend'e fazla bakma.\n" +
-            "• 1.şubeye %40-45, 2.şubeye %25-30, geri kalana az.\n" +
-            "• Az kazanayım ama kayıp olmasın mantığı.\n" +
-            "• Ucuz şubeye pahalıdan fazla kutu YASAK." :
-          state.planStrategy === "balanced" ?
-            "STRATEJİ DAVRANIŞI — DENGELİ:\n" +
-            "• 5-8 şubeye gönder. Geniş ama kontrollü.\n" +
-            "• Fiyat %60 + Trend %40 ağırlıkla karar ver.\n" +
-            "• 1.şubeye %30-35, 2.şubeye %20-25, daha eşit yay.\n" +
-            "• Makul risk, makul kazanç.\n" +
-            "• Ucuz şubeye pahalıdan fazla kutu YASAK." :
-            "STRATEJİ DAVRANIŞI — AGRESİF:\n" +
-            "• 6-10 şubeye gönder. Geniş dağılım.\n" +
-            "• Trend %60 + Fiyat %40 ağırlıkla karar ver.\n" +
-            "• Daha eşit dağılım: 1.şubeye %25-30, diğerleri %10-20.\n" +
-            "• Trendi YÜKSELEN şubelere ekstra şans ver — fiyatı düşük ama hızla yükselen şubeye de kutu yap.\n" +
-            "• Maksimum kazanç hedefle, risk tolere et."),
+        system: "Sen çiçek mezat lojistik uzmanısın. Yalova'da üretici, Flora mezatına gönderiyor. Türkçe.\n\n" +
+          "EN ÖNEMLİ KURAL: Dağılım KOD tarafından marjinal tahsis algoritmasıyla hesaplandı — sen ANLATIM katmanısın.\n" +
+          "Kutu/demet/şube sayılarını değiştirme, rakam uydurma. Verilen tahmini net rakamlarını aynen kullan.\n" +
+          "Görevin: dağılımı gerekçelendir, riskleri belirt, beklet listesi için öneri ver.\n" +
+          "🔍 KEŞİF kutularını 'test gönderimi' olarak işaretle.\n" +
+          "KESme çiçek üreticisi üretimi anlık artıramaz — sadece gönderim stratejisi anlatılır.\n\n" +
+          "STRATEJİ BAĞLAMI:\n" + strategyDesc[state.planStrategy],
         messages: [{ role: "user", content: planPrompt }]
       })
     });
@@ -424,7 +470,7 @@ async function handlePlan() {
     if (data.content && data.content.length > 0) {
       state.planResult = data.content.map(function(b){ return b.text || "" }).join("\n");
     } else if (data.error) {
-      state.planResult = "⚠ Hata: " + (data.error.message || JSON.stringify(data.error));
+      state.planResult = generateLocalPlan();
     } else {
       state.planResult = generateLocalPlan();
     }
@@ -432,88 +478,38 @@ async function handlePlan() {
     state.planResult = generateLocalPlan();
   }
 
-  if (state.planResult && !state.planResult.startsWith("⚠")) {
-    var codeEstimate = 0;
-    var last14 = new Date(); last14.setDate(last14.getDate() - 14);
-    var last14str = last14.toISOString().split("T")[0];
-
-    state.planFlowers.forEach(function(pf){
-      var flowerData = filtered.filter(function(r){ return r.c === pf.name });
-      var flowerRecent = ALL_DATA.filter(function(r){ return r.c === pf.name && r.t >= last14str });
-
-      var byBr = {};
-      flowerData.forEach(function(r){
-        if(!byBr[r.s]) byBr[r.s] = {net:0,d:0};
-        byBr[r.s].net += r.net; byBr[r.s].d += r.d;
-      });
-
-      var brList = Object.entries(byBr).map(function(e){
-        var avgDbn = e[1].d > 0 ? e[1].net / e[1].d : 0;
-
-        var brRecent = flowerRecent.filter(function(r){ return r.s === e[0] });
-        var uniqueDays = [...new Set(brRecent.map(function(r){return r.t}))].sort().reverse();
-        var last2Days = uniqueDays.slice(0, 2);
-        var last2Records = brRecent.filter(function(r){ return last2Days.includes(r.t) });
-        var last2Net = last2Records.reduce(function(s,r){return s+r.net},0);
-        var last2D = last2Records.reduce(function(s,r){return s+r.d},0);
-        var last2Dbn = last2D > 0 ? last2Net / last2D : null;
-
-        var midBrData = flowerRecent.filter(function(r){ return r.s === e[0] });
-        var midBrDbn = midBrData.reduce(function(s,r){return s+r.d},0) > 0 ? midBrData.reduce(function(s,r){return s+r.net},0) / midBrData.reduce(function(s,r){return s+r.d},0) : null;
-        var histBrData = ALL_DATA.filter(function(r){ return r.c === pf.name && r.s === e[0] && r.t.startsWith("2025") });
-        var histBrDbn = histBrData.reduce(function(s,r){return s+r.d},0) > 0 ? histBrData.reduce(function(s,r){return s+r.net},0) / histBrData.reduce(function(s,r){return s+r.d},0) : 0;
-
-        var trendAdjustedPrice;
-        var tAg = 0, tTop = 0;
-        if (last2Dbn !== null && last2Dbn > 0) { tTop += last2Dbn * 0.45; tAg += 0.45; }
-        if (midBrDbn !== null && midBrDbn > 0) { tTop += midBrDbn * 0.25; tAg += 0.25; }
-        if (avgDbn > 0) { tTop += avgDbn * 0.20; tAg += 0.20; }
-        if (histBrDbn > 0) { tTop += histBrDbn * 0.10; tAg += 0.10; }
-        trendAdjustedPrice = tAg > 0 ? tTop / tAg : avgDbn;
-
-        return {name:e[0], dbn:avgDbn, adjustedDbn:trendAdjustedPrice, last2Dbn:last2Dbn};
-      }).sort(function(a,b){return b.adjustedDbn - a.adjustedDbn});
-
-      if (brList.length > 0) {
-        var totalAdj = brList.reduce(function(s,b){return s+b.adjustedDbn},0);
-        var remaining = pf.demet;
-        brList.forEach(function(b, idx){
-          var share = totalAdj > 0 ? (b.adjustedDbn / totalAdj) : (1 / brList.length);
-          var demetForBranch = idx < brList.length - 1 ? Math.round(pf.demet * share) : remaining;
-          demetForBranch = Math.min(demetForBranch, remaining);
-          codeEstimate += b.adjustedDbn * demetForBranch;
-          remaining -= demetForBranch;
-        });
-      }
-    });
-    if (codeEstimate > 0) {
-      state.planCodeEstimate = codeEstimate;
-    }
-  }
-
   state.planLoading = false;
   render();
 }
 
+// Yerel (deterministik) plan — AI erişilemezse dagilim tablosundan üretilir
 function generateLocalPlan() {
-  var plan = "📦 GÖNDERİM PLANI (Yerel Analiz)\n\n";
-  var hd = getHeatData(getFiltered());
+  var dagilim = state.planDagilim || [];
+  var beklet = state.planBeklet || [];
+  if (dagilim.length === 0 && beklet.length === 0) {
+    return "📦 GÖNDERİM PLANI\n\nDağılım üretilemedi — seçili dönemde plan çiçekleri için şube verisi yok. Tarih aralığını genişletmeyi dene.";
+  }
 
+  var plan = "📦 GÖNDERİM PLANI (Marjinal Tahsis — Yerel Özet)\n\n";
   state.planFlowers.forEach(function(pf) {
-    var combos = hd.filter(function(h){ return h.cicek === pf.name }).slice(0, 5);
-    var remaining = pf.demet;
+    var rows = dagilim.filter(function(x){ return x.cicek === pf.name });
     plan += "**" + pf.name + "** (" + pf.demet + " demet):\n";
-    combos.forEach(function(c) {
-      if (remaining <= 0) return;
-      var boxes = Math.min(Math.ceil(remaining / state.planBoxSize), 2);
-      var dm = Math.min(boxes * state.planBoxSize, remaining);
-      plan += "  📦 " + c.sube + ": " + boxes + " kutu (" + dm + " dm) — " + fmt(c.dbn) + "/dm\n";
-      remaining -= dm;
+    if (rows.length === 0) plan += "  atama yok\n";
+    rows.forEach(function(x) {
+      plan += "  📦 " + x.sube + ": " + x.kutu + " kutu (" + x.demet + " dm) — " + fmt(x.tahminiDbn) + "/dm → " + fmt(x.tahminiNet) + (x.kesifKutusu ? " 🔍 KEŞİF" : "") + " [güven: " + x.guven + "]\n";
     });
-    if (remaining > 0) plan += "  📦 Diğer: " + Math.ceil(remaining / state.planBoxSize) + " kutu (" + remaining + " dm)\n";
     plan += "\n";
   });
 
-  plan += "Not: Bu yerel analiz. API bağlantısı olduğunda daha detaylı plan alabilirsin.";
+  if (beklet.length > 0) {
+    plan += "⏸ **BEKLET:**\n";
+    beklet.forEach(function(bk) {
+      plan += "  " + bk.cicek + ": " + bk.demet + " dm — " + bk.sebep + ". Ertesi mezata bekletmeyi veya düşük fiyatı bilinçli kabul etmeyi değerlendir.\n";
+    });
+    plan += "\n";
+  }
+
+  plan += "💰 **TAHMİNİ TOPLAM NET (dağılım bazlı): " + fmt(state.planTahminiNet || 0) + "**\n";
+  plan += "\nNot: AI anlatımı şu an erişilemez — bu deterministik özet aynı motor çıktısından üretildi.";
   return plan;
 }

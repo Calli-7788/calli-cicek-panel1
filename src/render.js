@@ -405,17 +405,53 @@ function render() {
 
     // Result
     if (state.planResult) {
-      // Tahmini net gelir kartı (kod hesaplaması)
-      if (state.planCodeEstimate > 0) {
-        var totalDm = state.planFlowers.reduce(function(s,f){return s+f.demet},0);
-        var totalKt = Math.ceil(totalDm / state.planBoxSize);
-        var avgPerDm = totalDm > 0 ? state.planCodeEstimate / totalDm : 0;
+      // Tahmini net gelir kartı — DAĞILIM BAZLI (marjinal tahsis)
+      if (state.planTahminiNet > 0) {
+        var atananDm = (state.planDagilim || []).reduce(function(s,x){return s+x.demet},0);
+        var atananKutu = (state.planDagilim || []).reduce(function(s,x){return s+x.kutu},0);
+        var avgPerDm = atananDm > 0 ? state.planTahminiNet / atananDm : 0;
         html += `<div class="card" style="background:rgba(168,85,247,0.08);border-color:rgba(168,85,247,0.15);margin-bottom:10px;padding:14px">`;
         html += `<div style="display:flex;justify-content:space-between;align-items:center">`;
-        html += `<div><div style="font-size:10px;color:#a78bfa;text-transform:uppercase;letter-spacing:0.5px">🔮 Tahmini Net Gelir (trend bazlı)</div><div style="font-size:22px;font-weight:800;color:#c4b5fd;margin-top:2px">${fmt(state.planCodeEstimate)}</div></div>`;
-        html += `<div style="text-align:right"><div style="font-size:10px;color:#64748b">${totalKt} kutu · ${totalDm} dm</div><div style="font-size:10px;color:#64748b">Ort: ${fmt(avgPerDm)}/dm</div></div>`;
+        html += `<div><div style="font-size:10px;color:#a78bfa;text-transform:uppercase;letter-spacing:0.5px">🔮 Tahmini Net Gelir (dağılım bazlı)</div><div style="font-size:22px;font-weight:800;color:#c4b5fd;margin-top:2px">${fmt(state.planTahminiNet)}</div></div>`;
+        html += `<div style="text-align:right"><div style="font-size:10px;color:#64748b">${atananKutu} kutu · ${atananDm} dm atandı</div><div style="font-size:10px;color:#64748b">Ort: ${fmt(avgPerDm)}/dm</div></div>`;
         html += `</div>`;
-        html += `<div style="margin-top:8px;font-size:10px;color:#475569">Son 2 mezat %70 + genel ort %30 ile hesaplandı. Paneldeki net gelirden farklı olabilir — bu gelecek tahminidir, geçmiş gerçekleşme değil.</div>`;
+        html += `<div style="margin-top:8px;font-size:10px;color:#475569">Σ (kombo demeti × atama anındaki marjinal ₺/dm). Doygunluk ve belirsizlik cezası dahil — genel ortalama çarpımı değil.</div>`;
+        html += `</div>`;
+      }
+
+      // Dağılım tablosu (motor çıktısı — kesin)
+      if (state.planDagilim && state.planDagilim.length > 0) {
+        html += `<div class="card" style="margin-bottom:10px;padding:0;overflow:hidden;overflow-x:auto">`;
+        html += `<div style="font-size:13px;font-weight:700;color:#f8fafc;padding:12px 14px 8px">📋 Dağılım Tablosu</div>`;
+        html += `<table style="width:100%;border-collapse:collapse;font-size:10px;min-width:420px">`;
+        html += `<thead><tr style="border-bottom:1px solid rgba(255,255,255,0.08)">`;
+        ["Çiçek","Şube","Kutu","Demet","₺/dm","Tah. Net","Güven"].forEach(function(h,hi){
+          html += `<th style="padding:6px ${hi===0?'14px':'6px'};text-align:${hi<2?'left':'right'};color:#64748b;font-size:8px;text-transform:uppercase;font-weight:600">${h}</th>`;
+        });
+        html += `</tr></thead><tbody>`;
+        state.planDagilim.forEach(function(x){
+          var gRenk = x.guven === "yüksek" ? "#34d399" : x.guven === "orta" ? "#fbbf24" : "#f87171";
+          html += `<tr style="border-bottom:1px solid rgba(255,255,255,0.03);${x.kesifKutusu?'background:rgba(250,204,21,0.04)':''}">`;
+          html += `<td style="padding:6px 14px;color:#cbd5e1">${esc(x.cicek)}${x.kesifKutusu?' <span style="font-size:8px;color:#fbbf24">🔍</span>':''}</td>`;
+          html += `<td style="padding:6px;color:#f8fafc;font-weight:500">${esc(x.sube)}</td>`;
+          html += `<td style="padding:6px;text-align:right;color:#94a3b8">${x.kutu}</td>`;
+          html += `<td style="padding:6px;text-align:right;color:#e2e8f0">${x.demet}</td>`;
+          html += `<td style="padding:6px;text-align:right;color:#a78bfa;font-weight:600">${fmt(x.tahminiDbn)}</td>`;
+          html += `<td style="padding:6px;text-align:right;color:#34d399;font-weight:600">${fmt(x.tahminiNet)}</td>`;
+          html += `<td style="padding:6px;text-align:right;color:${gRenk};font-size:9px">${x.guven}</td>`;
+          html += `</tr>`;
+        });
+        html += `</tbody></table></div>`;
+      }
+
+      // Beklet bölümü (açıkça)
+      if (state.planBeklet && state.planBeklet.length > 0) {
+        html += `<div class="card" style="margin-bottom:10px;background:rgba(250,204,21,0.06);border-color:rgba(250,204,21,0.15)">`;
+        html += `<div style="font-size:12px;font-weight:700;color:#fbbf24;margin-bottom:6px">⏸ Beklet</div>`;
+        state.planBeklet.forEach(function(bk){
+          html += `<div style="font-size:11px;color:#e2e8f0;padding:3px 0">${esc(bk.cicek)}: <strong>${bk.demet} dm</strong> — ${esc(bk.sebep)}</div>`;
+        });
+        html += `<div style="font-size:10px;color:#94a3b8;margin-top:6px">Bu demetler için kârlı kapasite bulunamadı — ertesi mezata bekletmeyi veya düşük fiyatı bilinçli kabul etmeyi değerlendir.</div>`;
         html += `</div>`;
       }
 
@@ -2407,7 +2443,7 @@ function planPDF() {
     state.planResult,
     state.planFlowers.map(function(f){return {name:f.name,demet:f.demet}}),
     state.planStrategy,
-    state.planCodeEstimate || 0,
+    state.planTahminiNet || 0,
     new Date().toISOString().split("T")[0]
   );
   var w = window.open('', '_blank');
@@ -2433,9 +2469,8 @@ function savePlan() {
   if (!state.planResult) return;
   var savedPlans = JSON.parse(localStorage.getItem("savedPlans") || "[]");
 
-  // Öncelik: Kodun kendi hesapladığı tahmini kullan (daha güvenilir)
-  // AI'nın yazdığı rakam brüt/net karışıklığına yol açıyor
-  var estimatedNet = state.planCodeEstimate || 0;
+  // Dağılım bazlı tahmin (marjinal tahsis motoru çıktısı)
+  var estimatedNet = state.planTahminiNet || 0;
   var bugun = new Date().toISOString().split("T")[0];
 
   // Şema v2 — dual-write: eski alan adları (date/flowers/strategy/estimatedNet)
@@ -2446,7 +2481,7 @@ function savePlan() {
     tarih: bugun,
     timestamp: Date.now(),
     olusturmaZamani: new Date().toISOString(),
-    motorNesli: "klasik",
+    motorNesli: "marjinal",
     flowers: state.planFlowers.map(function(f){return {name:f.name,demet:f.demet}}),
     cicekler: state.planFlowers.map(function(f){return {ad:f.name,demet:f.demet}}),
     boxSize: state.planBoxSize,
@@ -2456,8 +2491,8 @@ function savePlan() {
     result: state.planResult,
     estimatedNet: estimatedNet,
     tahminiToplamNet: estimatedNet,
-    dagilim: [],
-    beklet: [],
+    dagilim: state.planDagilim || [],
+    beklet: state.planBeklet || [],
     gerceklesen: null
   });
   localStorage.setItem("savedPlans", JSON.stringify(savedPlans));
