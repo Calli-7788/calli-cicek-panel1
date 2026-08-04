@@ -433,6 +433,48 @@ function render() {
       html += `</div>`;
     }
 
+    // ── 📏 Kalibrasyon panosu (kapalı accordion) ──
+    html += `<div class="card" style="margin-top:24px;margin-bottom:8px;padding:0;overflow:hidden">`;
+    html += `<div onclick="toggleExp('kalibrasyon')" style="padding:12px 14px;cursor:pointer;display:flex;justify-content:space-between;align-items:center"><span style="font-size:13px;font-weight:700;color:#f8fafc">📏 Kalibrasyon</span><span style="font-size:10px;color:#475569">${state.expanded.kalibrasyon ? '▲' : '▼'}</span></div>`;
+    if (state.expanded.kalibrasyon) {
+      var kal = getKalibrasyon();
+      html += `<div style="padding:0 14px 12px">`;
+      if (kal.yetersiz) {
+        html += `<div style="font-size:11px;color:#94a3b8;text-align:center;padding:10px 0">Henüz yeterli plan yok (n=${kal.n}). Plan kaydet, mezat sonrası tahmin/gerçek isabeti burada birikecek.</div>`;
+      } else {
+        html += `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px">`;
+        html += `<div style="padding:8px;border-radius:8px;background:rgba(255,255,255,0.03);text-align:center"><div style="font-size:8px;color:#64748b">MAE (₺)</div><div style="font-size:14px;font-weight:800;color:#f8fafc">${fmt(kal.mae)}</div></div>`;
+        html += `<div style="padding:8px;border-radius:8px;background:rgba(255,255,255,0.03);text-align:center"><div style="font-size:8px;color:#64748b">MAPE</div><div style="font-size:14px;font-weight:800;color:#f8fafc">%${kal.mape.toFixed(1)}</div></div>`;
+        html += `<div style="padding:8px;border-radius:8px;background:rgba(168,85,247,0.08);text-align:center"><div style="font-size:8px;color:#64748b">Bias</div><div style="font-size:14px;font-weight:800;color:${Math.abs(kal.bias) <= 10 ? '#34d399' : '#fbbf24'}">${kal.bias > 0 ? '+' : ''}%${kal.bias.toFixed(1)}</div><div style="font-size:7px;color:#475569">${kal.bias > 0 ? 'fazla tahmin' : 'az tahmin'}</div></div>`;
+        html += `</div>`;
+        html += `<div style="font-size:9px;color:#64748b;margin-bottom:8px">n=${kal.n} plan · Bias + = tahmin gerçeğin üstünde</div>`;
+        // Motor nesli kıyası
+        html += `<div style="display:flex;gap:6px;margin-bottom:8px">`;
+        [["klasik","Klasik"],["marjinal","Marjinal"]].forEach(function(m){
+          var mv = kal.motorlar[m[0]];
+          html += `<div style="flex:1;padding:6px 8px;border-radius:8px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05)"><div style="font-size:9px;color:#94a3b8;font-weight:600">${m[1]} <span style="color:#475569">(n=${mv.n})</span></div>`;
+          if (mv.yetersiz) html += `<div style="font-size:9px;color:#475569">n≥3 gerekli</div>`;
+          else html += `<div style="font-size:10px;color:#e2e8f0">MAPE %${mv.mape.toFixed(1)} · Bias ${mv.bias > 0 ? '+' : ''}%${mv.bias.toFixed(1)}</div>`;
+          html += `</div>`;
+        });
+        html += `</div>`;
+        // Çiçek / şube bias listeleri
+        [["Çiçek bazlı bias", kal.cicekBias], ["Şube bazlı bias", kal.subeBias]].forEach(function(bl){
+          if (bl[1].length === 0) {
+            html += `<div style="font-size:9px;color:#475569;margin-bottom:6px">${bl[0]}: yeterli kombo gözlemi yok (n≥5 gerekli)</div>`;
+          } else {
+            html += `<div style="font-size:10px;font-weight:600;color:#94a3b8;margin-bottom:4px">${bl[0]} (en sapmalı)</div>`;
+            bl[1].forEach(function(b){
+              html += `<div style="display:flex;justify-content:space-between;font-size:10px;padding:2px 0"><span style="color:#cbd5e1">${esc(b.ad)} <span style="color:#475569">(n=${b.n})</span></span><span style="color:${Math.abs(b.bias) <= 10 ? '#34d399' : Math.abs(b.bias) <= 25 ? '#fbbf24' : '#f87171'};font-weight:600">${b.bias > 0 ? '+' : ''}%${b.bias.toFixed(1)}</span></div>`;
+            });
+            html += `<div style="margin-bottom:6px"></div>`;
+          }
+        });
+      }
+      html += `</div>`;
+    }
+    html += `</div>`;
+
     // Saved Plans & Comparison
     var savedPlans = JSON.parse(localStorage.getItem("savedPlans") || "[]");
     if (savedPlans.length > 0) {
@@ -489,6 +531,15 @@ function render() {
             if (dayTotalNet > actualNet) {
               html += `<div style="font-size:11px;color:#64748b;padding:4px 0;border-top:1px solid rgba(255,255,255,0.04);margin-top:4px">Günün toplam net: <span style="color:#4ade80;font-weight:600">${fmt(dayTotalNet)}</span> <span style="color:#475569">(tüm çiçekler)</span></div>`;
             }
+            // Plana uyum sorusu (kalibrasyon için kayda işlenir)
+            var uyumSecim = plan.gerceklesen && plan.gerceklesen.uyum;
+            html += `<div style="display:flex;align-items:center;gap:6px;padding:6px 0;border-top:1px solid rgba(255,255,255,0.04);margin-top:4px">`;
+            html += `<span style="font-size:10px;color:#64748b">Plana uyuldu mu?</span>`;
+            [["evet","Evet","#34d399"],["kismen","Kısmen","#fbbf24"],["hayir","Hayır","#f87171"]].forEach(function(u){
+              var aktif = uyumSecim === u[0];
+              html += `<button onclick="setPlanUyum(${realIdx},'${u[0]}')" style="padding:3px 10px;border-radius:6px;font-size:10px;cursor:pointer;border:1px solid ${aktif?u[2]:'rgba(255,255,255,0.1)'};background:${aktif?u[2]+'22':'transparent'};color:${aktif?u[2]:'#94a3b8'};font-weight:${aktif?'700':'400'}">${u[1]}</button>`;
+            });
+            html += `</div>`;
           } else {
             html += `<div><div style="font-size:9px;color:#64748b">Gerçekleşen</div><div style="font-size:12px;color:#475569">Henüz veri yok</div></div>`;
           }
@@ -497,6 +548,31 @@ function render() {
 
         // Toggle details
         if (state.expanded["plan_"+realIdx]) {
+          // Çiçek × şube kırılım tablosu (plan vs gerçek)
+          var kir = hasActual ? buildGerceklesenKirilim(plan) : null;
+          if (kir && kir.kirilim.length > 0) {
+            html += `<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.04)">`;
+            html += `<div style="font-size:10px;font-weight:700;color:#94a3b8;margin-bottom:6px">Kırılım — plan vs gerçek (${fD(kir.eslesmeTarihi)})</div>`;
+            html += `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:9px;min-width:380px">`;
+            html += `<thead><tr style="border-bottom:1px solid rgba(255,255,255,0.08)">`;
+            ["Çiçek","Şube","Plan dm","Tah. ₺/dm","Gerçek dm","Ger. ₺/dm","Fiyat Δ%"].forEach(function(h,hi){
+              html += `<th style="padding:4px 4px;text-align:${hi<2?'left':'right'};color:#64748b;font-size:8px;font-weight:600">${h}</th>`;
+            });
+            html += `</tr></thead><tbody>`;
+            kir.kirilim.forEach(function(k){
+              var fh = k.fiyatHatasiPct;
+              html += `<tr style="border-bottom:1px solid rgba(255,255,255,0.03)">`;
+              html += `<td style="padding:4px;color:#cbd5e1">${esc(k.cicek)}</td>`;
+              html += `<td style="padding:4px;color:#cbd5e1">${esc(k.sube)}</td>`;
+              html += `<td style="padding:4px;text-align:right;color:#94a3b8">${k.planDemet != null ? k.planDemet : '—'}</td>`;
+              html += `<td style="padding:4px;text-align:right;color:#a78bfa">${k.tahminiDbn != null ? fmt(k.tahminiDbn) : '—'}</td>`;
+              html += `<td style="padding:4px;text-align:right;color:#e2e8f0">${k.gercekDemet}</td>`;
+              html += `<td style="padding:4px;text-align:right;color:#34d399">${k.gercekDbn > 0 ? fmt(k.gercekDbn) : '—'}</td>`;
+              html += `<td style="padding:4px;text-align:right;color:${fh == null ? '#475569' : Math.abs(fh) <= 10 ? '#34d399' : Math.abs(fh) <= 25 ? '#fbbf24' : '#f87171'}">${fh != null ? (fh > 0 ? '+' : '') + fh.toFixed(0) + '%' : '—'}</td>`;
+              html += `</tr>`;
+            });
+            html += `</tbody></table></div></div>`;
+          }
           var detailHTML = esc(plan.result).replace(/\*\*(.*?)\*\*/g, '<strong style="color:#f8fafc">$1</strong>').replace(/\n/g, '<br>');
           html += `<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.04);font-size:11px;color:#94a3b8;max-height:60vh;overflow-y:auto;-webkit-overflow-scrolling:touch">${detailHTML}</div>`;
           html += `<button onclick="savedPlanPDF(${realIdx})" style="margin-top:6px;padding:6px 12px;border-radius:6px;border:none;background:rgba(34,197,94,0.12);color:#6ee7b7;font-size:10px;cursor:pointer;font-weight:600">📄 PDF Çıktı Al</button>`;
@@ -2360,15 +2436,29 @@ function savePlan() {
   // Öncelik: Kodun kendi hesapladığı tahmini kullan (daha güvenilir)
   // AI'nın yazdığı rakam brüt/net karışıklığına yol açıyor
   var estimatedNet = state.planCodeEstimate || 0;
+  var bugun = new Date().toISOString().split("T")[0];
 
+  // Şema v2 — dual-write: eski alan adları (date/flowers/strategy/estimatedNet)
+  // görüntüleme geriye-uyumu için korunur, yeni alanlar kalibrasyon için eklenir
   savedPlans.push({
-    date: new Date().toISOString().split("T")[0],
+    schemaVersion: 2,
+    date: bugun,
+    tarih: bugun,
     timestamp: Date.now(),
+    olusturmaZamani: new Date().toISOString(),
+    motorNesli: "klasik",
     flowers: state.planFlowers.map(function(f){return {name:f.name,demet:f.demet}}),
+    cicekler: state.planFlowers.map(function(f){return {ad:f.name,demet:f.demet}}),
     boxSize: state.planBoxSize,
+    kutuBoyu: state.planBoxSize,
     strategy: state.planStrategy,
+    strateji: state.planStrategy,
     result: state.planResult,
-    estimatedNet: estimatedNet
+    estimatedNet: estimatedNet,
+    tahminiToplamNet: estimatedNet,
+    dagilim: [],
+    beklet: [],
+    gerceklesen: null
   });
   localStorage.setItem("savedPlans", JSON.stringify(savedPlans));
   alert(estimatedNet > 0
