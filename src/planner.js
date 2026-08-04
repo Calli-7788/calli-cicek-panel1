@@ -189,12 +189,12 @@ async function handlePlan() {
     trendInfo += "\n\n" + pf.name + " (" + pf.demet + " demet) — Genel ort: " + fmt(genelOrtalama) + "/dm";
     if (last2Dates.length > 0) trendInfo += " | Son 2 mezat: " + last2Dates.map(function(d){return fD(d)}).join(", ");
 
-    trendInfo += "\n  ŞUBE ANALİZİ (ayarlı skora göre):";
+    trendInfo += "\n  ŞUBE ANALİZİ (atama önceliği ayarlı skora göre; tahmin cezasız katmanlı skordan):";
     branchRanked.forEach(function(b) {
       var trendDir = b.trend > 3 ? "↑" : b.trend < -3 ? "↓" : "→";
       var histNote = b.histDbn > 0 ? " | 2025:" + fmt(b.histDbn) : "";
       var last2Note = b.last2Dbn !== null ? " | Son2mezat:" + fmt(b.last2Dbn) : " | Son2mezat:YOK";
-      trendInfo += "\n    " + b.name + ": skor " + fmt(b.filtreSkoru) + "/dm → ayarlı " + fmt(b.ayarliSkor) + "/dm (CV:" + (b.cv*100).toFixed(0) + "%, trend:" + trendDir + (b.trend>0?"+":"") + b.trend.toFixed(0) + "%" + last2Note + histNote + ") | Güven:" + b.guvenLabel + " | Absorpsiyon: median=" + b.absMedian + "dm, P75=" + b.absP75 + "dm, max=" + b.absMax + "dm, son60gün=" + b.absAlimSayisi + "alım";
+      trendInfo += "\n    " + b.name + ": tahmin skoru " + fmt(b.filtreSkoru) + "/dm | atama önceliği " + fmt(b.ayarliSkor) + "/dm (CV:" + (b.cv*100).toFixed(0) + "%, trend:" + trendDir + (b.trend>0?"+":"") + b.trend.toFixed(0) + "%" + last2Note + histNote + ") | Güven:" + b.guvenLabel + " | Absorpsiyon: median=" + b.absMedian + "dm, P75=" + b.absP75 + "dm, max=" + b.absMax + "dm, son60gün=" + b.absAlimSayisi + "alım";
     });
 
     if (state.planBranchMode === "explore") {
@@ -226,30 +226,44 @@ async function handlePlan() {
         // (Verisiz kombonun skoru 0 olduğundan keşif eşiğini de geçemez — fiilen dışarıda kalır.)
         var yalnizKesif = b.guvenLabel === "Düşük" || b.absMax === 0;
         if (!yalnizKesif) {
-          // Ana tahsis adayı — doygunluk çarpanı uygulanır
+          // Ana tahsis adayı — doygunluk çarpanı uygulanır.
+          // ÖNCELİK ayarlı skorla (belirsizlik cezalı), TAHMİN cezasız katmanlı skorla:
+          // strateji cezası tercihtir, tahmin değil (kalibrasyon motor isabetini ölçer).
           var carpan = saturationCarpan(atanan, b.absMedian, b.absP75, b.absMax);
           if (carpan === null) return; // kombo kapandı (atanan > max)
           var marjinal = b.ayarliSkor * carpan;
-          if (!enIyi || marjinal > enIyi.marjinal) enIyi = { b: b, marjinal: marjinal, carpan: carpan, kesif: false };
+          if (!enIyi || marjinal > enIyi.marjinal) enIyi = { b: b, marjinal: marjinal, tahminDbn: b.filtreSkoru * carpan, carpan: carpan, kesif: false };
         } else if (state.planStrategy === "aggressive" && kesifPlanSayisi < 2 && atanan === 0 &&
                    genelOrtalama > 0 && b.filtreSkoru > genelOrtalama) {
           // KEŞİF: güven düşük ama skor genel ortalamanın üstünde — en fazla 1 kutu
           var marjinalK = b.ayarliSkor;
-          if (!enIyi || marjinalK > enIyi.marjinal) enIyi = { b: b, marjinal: marjinalK, carpan: 1.0, kesif: true };
+          if (!enIyi || marjinalK > enIyi.marjinal) enIyi = { b: b, marjinal: marjinalK, tahminDbn: b.filtreSkoru, carpan: 1.0, kesif: true };
         }
       });
 
       var kalanDemet = 0;
       if (!enIyi || enIyi.marjinal <= 0) {
         for (var kj = bi; kj < kutular.length; kj++) kalanDemet += kutular[kj];
-        beklet.push({
-          cicek: pf.name, demet: kalanDemet,
-          sebep: !enIyi ? (branchRanked.length === 0 ? "veri yok" : "kapasite doldu") : "marjinal katkı ≤ 0"
-        });
+        var sebep;
+        if (!enIyi) {
+          if (branchRanked.length === 0) {
+            sebep = "veri yok";
+          } else {
+            var anaAdayVar = branchRanked.some(function(b){ return !(b.guvenLabel === "Düşük" || b.absMax === 0); });
+            if (!anaAdayVar) {
+              sebep = state.planStrategy === "aggressive" ? "güven yetersiz (keşif sınırı doldu)" : "güven yetersiz (keşifsiz modda atama yapılmaz)";
+            } else {
+              sebep = "kapasite doldu";
+            }
+          }
+        } else {
+          sebep = "marjinal katkı ≤ 0";
+        }
+        beklet.push({ cicek: pf.name, demet: kalanDemet, sebep: sebep });
         break;
       }
 
-      atamalar.push({ sube: enIyi.b.name, demet: kutuDemet, dbn: enIyi.marjinal, carpan: enIyi.carpan, kesif: enIyi.kesif, guven: enIyi.kesif ? "düşük" : enIyi.b.guvenLabel.toLocaleLowerCase("tr-TR") });
+      atamalar.push({ sube: enIyi.b.name, demet: kutuDemet, dbn: enIyi.tahminDbn, carpan: enIyi.carpan, kesif: enIyi.kesif, guven: enIyi.kesif ? "düşük" : enIyi.b.guvenLabel.toLocaleLowerCase("tr-TR") });
       atananMap[enIyi.b.name] = (atananMap[enIyi.b.name] || 0) + kutuDemet;
       if (enIyi.kesif) kesifPlanSayisi++;
     }
@@ -289,7 +303,7 @@ async function handlePlan() {
     dagilimText += "\n" + pf.name + " (" + pf.demet + " dm):";
     if (rows.length === 0) dagilimText += " atama yok";
     rows.forEach(function(x) {
-      dagilimText += "\n  📦 " + x.sube + ": " + x.kutu + " kutu, " + x.demet + " dm × " + fmt(x.tahminiDbn) + "/dm = " + fmt(x.tahminiNet) + " (güven: " + x.guven + ", doygunluk: " + x.doygunlukCarpani.toFixed(2) + (x.kesifKutusu ? ", 🔍 KEŞİF" : "") + ")";
+      dagilimText += "\n  📦 " + x.sube + ": " + x.kutu + " kutu, " + x.demet + " dm × " + fmt(x.tahminiDbn) + "/dm = " + fmt(x.tahminiNet) + " (güven: " + x.guven + ", doygunluk: " + x.doygunlukCarpani.toFixed(2) + (x.kesifKutusu ? ", 🔍 KEŞİF — test gönderimi" : "") + ")";
     });
   });
   if (beklet.length > 0) {
@@ -439,8 +453,8 @@ async function handlePlan() {
     "1. HESAPLANAN DAĞILIM tablosu KESİNDİR — kutu/demet/şube sayılarını DEĞİŞTİRME, yeni kombo EKLEME, kombo ÇIKARMA.\n" +
     "2. Görevin ANLATIM: her şube ataması için gerekçe (fiyat skoru, trend, güven, absorpsiyon), riskleri belirt.\n" +
     "3. Rakam üretme — tahmini net rakamlarını dağılım tablosundan AYNEN kullan.\n" +
-    "4. 🔍 KEŞİF işaretli kutuları 'test gönderimi' olarak anlat, nedenini belirt.\n" +
-    "5. BEKLET listesi varsa: ertesi mezata bekletme veya bilinçli düşük fiyat kabulü seçeneklerini kısaca değerlendir.\n" +
+    "4. 🔍 KEŞİF işaretli kutuları 'test gönderimi' olarak anlat: az veriyle sınırlı deneme olduğunu, sonucuna göre kalıcılaşacağını belirt.\n" +
+    "5. BEKLET listesi varsa: her kalem için ertesi mezata bekletme veya bilinçli düşük fiyat kabulü seçeneklerini kısaca değerlendir, sebebe göre öneri ver.\n" +
     "\nÇIKTI FORMATI:\n" +
     "📦 [ŞUBE] - [KUTU] kutu ([DEMET] dm [ÇİÇEK])\n" +
     "  Gerekçe: fiyat/trend/güven kısa açıklama\n" +
@@ -496,7 +510,7 @@ function generateLocalPlan() {
     plan += "**" + pf.name + "** (" + pf.demet + " demet):\n";
     if (rows.length === 0) plan += "  atama yok\n";
     rows.forEach(function(x) {
-      plan += "  📦 " + x.sube + ": " + x.kutu + " kutu (" + x.demet + " dm) — " + fmt(x.tahminiDbn) + "/dm → " + fmt(x.tahminiNet) + (x.kesifKutusu ? " 🔍 KEŞİF" : "") + " [güven: " + x.guven + "]\n";
+      plan += "  📦 " + x.sube + ": " + x.kutu + " kutu (" + x.demet + " dm) — " + fmt(x.tahminiDbn) + "/dm → " + fmt(x.tahminiNet) + (x.kesifKutusu ? " 🔍 KEŞİF (test gönderimi)" : "") + " [güven: " + x.guven + "]\n";
     });
     plan += "\n";
   });

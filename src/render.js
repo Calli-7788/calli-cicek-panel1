@@ -415,7 +415,7 @@ function render() {
         html += `<div><div style="font-size:10px;color:#a78bfa;text-transform:uppercase;letter-spacing:0.5px">🔮 Tahmini Net Gelir (dağılım bazlı)</div><div style="font-size:22px;font-weight:800;color:#c4b5fd;margin-top:2px">${fmt(state.planTahminiNet)}</div></div>`;
         html += `<div style="text-align:right"><div style="font-size:10px;color:#64748b">${atananKutu} kutu · ${atananDm} dm atandı</div><div style="font-size:10px;color:#64748b">Ort: ${fmt(avgPerDm)}/dm</div></div>`;
         html += `</div>`;
-        html += `<div style="margin-top:8px;font-size:10px;color:#475569">Σ (kombo demeti × atama anındaki marjinal ₺/dm). Doygunluk ve belirsizlik cezası dahil — genel ortalama çarpımı değil.</div>`;
+        html += `<div style="margin-top:8px;font-size:10px;color:#475569">Σ (kombo demeti × katmanlı skor × doygunluk). Strateji cezası atama önceliğini belirler, tahmine karışmaz — kalibrasyon motor isabetini ölçer.</div>`;
         html += `</div>`;
       }
 
@@ -484,16 +484,25 @@ function render() {
         html += `<div style="padding:8px;border-radius:8px;background:rgba(168,85,247,0.08);text-align:center"><div style="font-size:8px;color:#64748b">Bias</div><div style="font-size:14px;font-weight:800;color:${Math.abs(kal.bias) <= 10 ? '#34d399' : '#fbbf24'}">${kal.bias > 0 ? '+' : ''}%${kal.bias.toFixed(1)}</div><div style="font-size:7px;color:#475569">${kal.bias > 0 ? 'fazla tahmin' : 'az tahmin'}</div></div>`;
         html += `</div>`;
         html += `<div style="font-size:9px;color:#64748b;margin-bottom:8px">n=${kal.n} plan · Bias + = tahmin gerçeğin üstünde</div>`;
-        // Motor nesli kıyası
-        html += `<div style="display:flex;gap:6px;margin-bottom:8px">`;
+        // Motor nesli kıyası — klasik vs marjinal (vurgulu)
+        var mk = kal.motorlar.klasik, mm = kal.motorlar.marjinal;
+        var kiyasVar = !mk.yetersiz && !mm.yetersiz;
+        var kazanan = kiyasVar ? (mm.mape < mk.mape ? "marjinal" : mm.mape > mk.mape ? "klasik" : null) : null;
+        html += `<div style="font-size:10px;font-weight:700;color:#c4b5fd;margin-bottom:4px">⚙ Motor Nesli Kıyası</div>`;
+        html += `<div style="display:flex;gap:6px;margin-bottom:${kiyasVar ? '6px' : '8px'}">`;
         [["klasik","Klasik"],["marjinal","Marjinal"]].forEach(function(m){
           var mv = kal.motorlar[m[0]];
-          html += `<div style="flex:1;padding:6px 8px;border-radius:8px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05)"><div style="font-size:9px;color:#94a3b8;font-weight:600">${m[1]} <span style="color:#475569">(n=${mv.n})</span></div>`;
+          var kazandiMi = kazanan === m[0];
+          html += `<div style="flex:1;padding:6px 8px;border-radius:8px;background:${kazandiMi ? 'rgba(34,197,94,0.08)' : 'rgba(255,255,255,0.02)'};border:1px solid ${kazandiMi ? 'rgba(34,197,94,0.25)' : 'rgba(255,255,255,0.05)'}"><div style="font-size:9px;color:${kazandiMi ? '#6ee7b7' : '#94a3b8'};font-weight:600">${kazandiMi ? '🏆 ' : ''}${m[1]} <span style="color:#475569">(n=${mv.n})</span></div>`;
           if (mv.yetersiz) html += `<div style="font-size:9px;color:#475569">n≥3 gerekli</div>`;
           else html += `<div style="font-size:10px;color:#e2e8f0">MAPE %${mv.mape.toFixed(1)} · Bias ${mv.bias > 0 ? '+' : ''}%${mv.bias.toFixed(1)}</div>`;
           html += `</div>`;
         });
         html += `</div>`;
+        if (kiyasVar) {
+          var mapeFark = Math.abs(mk.mape - mm.mape);
+          html += `<div style="font-size:9px;color:${kazanan ? '#6ee7b7' : '#94a3b8'};margin-bottom:8px">${kazanan ? (kazanan === 'marjinal' ? 'Marjinal motor' : 'Klasik motor') + ' ' + mapeFark.toFixed(1) + ' puan daha isabetli (MAPE)' : 'İki motor eşit isabette'}</div>`;
+        }
         // Çiçek / şube bias listeleri
         [["Çiçek bazlı bias", kal.cicekBias], ["Şube bazlı bias", kal.subeBias]].forEach(function(bl){
           if (bl[1].length === 0) {
