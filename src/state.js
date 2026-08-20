@@ -36,7 +36,8 @@ window.state = {
   caSecim: null,
   caSearch: "",
   riskGruplar: null,
-  giderSube: null  // Giderler sekmesi böl.4 şube filtresi
+  giderSube: null,  // Giderler sekmesi böl.4 şube filtresi
+  tediyeForm: null  // Tediye "geldi" inline formu açık olan dönem|hesap anahtarı
 };
 
 function setState(updates) {

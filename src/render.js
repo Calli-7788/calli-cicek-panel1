@@ -150,7 +150,7 @@ function render() {
   html += `</div>`;
 
   // Tabs
-  const tabList = [{id:"panel",l:"Panel",i:"◉"},{id:"plan",l:"Planlayıcı",i:"🎯"},{id:"sube",l:"Şube Tablosu",i:"📋"},{id:"compare",l:"Karşılaştır",i:"⚡"},{id:"heat",l:"Kâr Haritası",i:"🔥"},{id:"tablo",l:"Tablo",i:"☰"},{id:"rapor",l:"Rapor",i:"📄"},{id:"ai",l:"AI",i:"✦"},{id:"yoy",l:"Geçen Yıl",i:"📊"},{id:"mevsim",l:"Mevsimsellik",i:"🗓"},{id:"cicekanaliz",l:"Çiçek Analiz",i:"🌷"},{id:"tahtrend",l:"Tahmin & Risk",i:"🔮"},{id:"gider",l:"Giderler",i:"💸"}];
+  const tabList = [{id:"panel",l:"Panel",i:"◉"},{id:"plan",l:"Planlayıcı",i:"🎯"},{id:"sube",l:"Şube Tablosu",i:"📋"},{id:"compare",l:"Karşılaştır",i:"⚡"},{id:"heat",l:"Kâr Haritası",i:"🔥"},{id:"tablo",l:"Tablo",i:"☰"},{id:"rapor",l:"Rapor",i:"📄"},{id:"ai",l:"AI",i:"✦"},{id:"yoy",l:"Geçen Yıl",i:"📊"},{id:"mevsim",l:"Mevsimsellik",i:"🗓"},{id:"cicekanaliz",l:"Çiçek Analiz",i:"🌷"},{id:"tahtrend",l:"Tahmin & Risk",i:"🔮"},{id:"gider",l:"Giderler",i:"💸"},{id:"tediye",l:"Tediye",i:"💰"}];
   html += `<div class="tabs">`;
   tabList.forEach(t => {
     html += `<button class="tab-btn ${state.tab===t.id?'active':''}" onclick="setState({tab:'${t.id}',ddOpen:null})">${t.i} ${t.l}</button>`;
@@ -2157,6 +2157,132 @@ function render() {
       html += `<div style="display:flex;justify-content:space-between;padding:8px 0 2px;border-top:1px solid rgba(255,255,255,0.08)"><span style="font-size:12px;color:#f8fafc;font-weight:700">Toplam</span><span style="font-size:12px;color:#4ade80;font-weight:800">${fmt2(gs.vergi.bagkur + gs.vergi.stopaj + gs.vergi.borsa)}</span></div>`;
       html += `<div style="font-size:9px;color:#64748b;margin-top:8px">📋 Muhasebe için — dönem: ${dateLabel}</div>`;
       html += `</div>`;
+    }
+  }
+
+  // ══ TEDİYE (Flora ödeme takibi — tarih filtresinden bağımsız) ══
+  if (state.tab === "tediye") {
+    html += `<div class="sec-title">Tediye Takibi</div>`;
+    html += `<div style="font-size:12px;color:#94a3b8;margin-bottom:14px;margin-top:-6px">Perşembe–Çarşamba satış dönemi → 26 gün sonra Pazartesi ödemesi · Zarar kayıtları dahil (gerçek para hesabı)</div>`;
+
+    var tDonemler = getTediyeDonemleri();
+    var tGunAd = ["Paz","Pzt","Sal","Çar","Per","Cum","Cmt"];
+    var tBugun = new Date().toISOString().split("T")[0];
+    var tBuAy = tBugun.substring(0, 7);
+    var tHesapAdlari = ["4675", "5994"];
+
+    if (tDonemler.length === 0) {
+      html += `<div class="card" style="background:rgba(250,204,21,0.06);border-color:rgba(250,204,21,0.12);text-align:center;padding:30px"><div style="font-size:14px;color:#fbbf24;margin-bottom:6px">Henüz V2 satış verisi yok</div><div style="font-size:12px;color:#94a3b8">Bu sekme 31 Temmuz 2026 sonrası satışların tediyesini takip eder.</div></div>`;
+      html += `<div style="font-size:10px;color:#64748b;margin-top:10px;text-align:center">31 Temmuz 2026 öncesi ödemeler için Flora Ödemelerim sayfası</div>`;
+    } else {
+      var hesapGeldiMi = function(dn, h) { return dn.durum[h] && dn.durum[h].durum === "geldi"; };
+      var donemTamamenGeldi = function(dn) {
+        return Object.keys(dn.hesaplar).every(function(h){ return hesapGeldiMi(dn, h); });
+      };
+
+      // ── Bölüm 1: Yaklaşan Ödemeler (ödenmemiş, en yakın ödeme üstte) ──
+      var bekleyenler = tDonemler.filter(function(dn){ return !donemTamamenGeldi(dn); }).slice().sort(function(a,b){ return a.odemeTarihi.localeCompare(b.odemeTarihi) });
+      html += `<div class="sec-title" style="font-size:13px">📅 Yaklaşan Ödemeler</div>`;
+      if (bekleyenler.length === 0) {
+        html += `<div class="card" style="margin-bottom:14px;text-align:center;padding:14px"><div style="font-size:12px;color:#34d399">✓ Bekleyen ödeme yok — tüm dönemler işaretli</div></div>`;
+      }
+      bekleyenler.forEach(function(dn) {
+        var od = new Date(dn.odemeTarihi + "T12:00:00");
+        var ert = new Date(od.getTime()); ert.setDate(ert.getDate() + 1);
+        html += `<div class="card" style="margin-bottom:10px">`;
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">`;
+        html += `<div style="font-size:13px;font-weight:700;color:#f8fafc">📅 ${tGunAd[od.getDay()]} ${fD(dn.odemeTarihi)} <span style="font-size:10px;color:#64748b;font-weight:400">(hesapta ~${tGunAd[ert.getDay()]} ${fD(ert.toISOString().split("T")[0])})</span></div>`;
+        if (dn.devamEdiyor) html += `<span style="font-size:9px;padding:2px 8px;border-radius:10px;background:rgba(250,204,21,0.15);color:#fbbf24;font-weight:700">DEVAM EDİYOR</span>`;
+        html += `</div>`;
+        html += `<div style="font-size:10px;color:#64748b;margin-bottom:8px">Dönem: ${fD(dn.baslangic)} – ${fD(dn.bitis)} · ${dn.toplamSatir} satır</div>`;
+
+        html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">`;
+        tHesapAdlari.forEach(function(h) {
+          var hv = dn.hesaplar[h];
+          if (!hv) {
+            html += `<div style="padding:10px;border-radius:10px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);text-align:center"><div style="font-size:10px;color:#475569;font-weight:600">${h}</div><div style="font-size:11px;color:#475569;margin-top:4px">satış yok</div></div>`;
+            return;
+          }
+          var geldi = hesapGeldiMi(dn, h);
+          var formKey = dn.bitis + "|" + h;
+          html += `<div style="padding:10px;border-radius:10px;background:${geldi ? 'rgba(34,197,94,0.06)' : 'rgba(255,255,255,0.03)'};border:1px solid ${geldi ? 'rgba(34,197,94,0.2)' : 'rgba(255,255,255,0.06)'}">`;
+          html += `<div style="font-size:10px;color:#94a3b8;font-weight:600">${h}</div>`;
+          html += `<div style="font-size:16px;font-weight:800;color:#f8fafc;margin:2px 0">${fmt(hv.net)}${dn.devamEdiyor ? ' <span style="font-size:8px;color:#fbbf24;font-weight:400">şu ana kadar</span>' : ''}</div>`;
+          if (geldi) {
+            html += `<div style="font-size:10px;color:#34d399;font-weight:600">✓ Geldi</div>`;
+          } else if (state.tediyeForm === formKey) {
+            html += `<div style="display:flex;flex-direction:column;gap:4px;margin-top:4px">`;
+            html += `<button onclick="setTediyeDurum('${dn.bitis}','${h}','geldi',null)" style="padding:5px;border-radius:6px;border:none;background:rgba(34,197,94,0.2);color:#6ee7b7;font-size:10px;cursor:pointer;font-weight:600">Beklenenle aynı ✓</button>`;
+            html += `<div style="display:flex;gap:4px"><input id="tediyeTutarInput" type="number" step="0.01" placeholder="Farklı tutar" style="flex:1;min-width:0;padding:5px;border-radius:6px;border:1px solid rgba(255,255,255,0.1);background:rgba(0,0,0,0.3);color:#f8fafc;font-size:10px"><button onclick="tediyeFarkliKaydet('${dn.bitis}','${h}')" style="padding:5px 8px;border-radius:6px;border:none;background:rgba(168,85,247,0.2);color:#c4b5fd;font-size:10px;cursor:pointer">Kaydet</button></div>`;
+            html += `<button onclick="setState({tediyeForm:null})" style="padding:3px;border-radius:6px;border:none;background:transparent;color:#475569;font-size:9px;cursor:pointer">vazgeç</button>`;
+            html += `</div>`;
+          } else {
+            html += `<button onclick="tediyeFormAc('${dn.bitis}','${h}')" style="width:100%;padding:5px;border-radius:6px;border:1px solid rgba(34,197,94,0.3);background:transparent;color:#6ee7b7;font-size:10px;cursor:pointer;font-weight:600">✓ Geldi</button>`;
+          }
+          html += `</div>`;
+        });
+        html += `</div>`;
+
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;padding-top:6px;border-top:1px solid rgba(255,255,255,0.04)">`;
+        html += `<span style="font-size:11px;color:#94a3b8">Toplam: <strong style="color:#4ade80">${fmt(dn.toplamNet)}</strong></span>`;
+        if (dn.zararSayisi > 0) html += `<span style="font-size:9px;color:#f87171">⚠ ${dn.zararSayisi} zarar kaydı dahil (−${fmt(Math.abs(dn.zararToplam))})</span>`;
+        html += `</div>`;
+        html += `</div>`;
+      });
+
+      // ── Bölüm 2: Gelen Ödemeler ──
+      html += `<div class="sec-title" style="font-size:13px;margin-top:20px">✅ Gelen Ödemeler</div>`;
+      var gelenler = [];
+      tDonemler.forEach(function(dn) {
+        Object.keys(dn.hesaplar).forEach(function(h) {
+          if (hesapGeldiMi(dn, h)) gelenler.push({ dn: dn, h: h, beklenen: dn.hesaplar[h].net, kayit: dn.durum[h] });
+        });
+      });
+      gelenler.sort(function(a,b){ return b.dn.odemeTarihi.localeCompare(a.dn.odemeTarihi) });
+      if (gelenler.length === 0) {
+        html += `<div class="card" style="margin-bottom:14px;text-align:center;padding:14px"><div style="font-size:11px;color:#64748b">Henüz gelen ödeme yok</div></div>`;
+      } else {
+        html += `<div class="card" style="margin-bottom:14px;padding:6px 14px">`;
+        gelenler.forEach(function(g, gi) {
+          var gercek = g.kayit.gercekTutar;
+          var fark = gercek != null ? gercek - g.beklenen : 0;
+          var farkRenk = Math.abs(fark) < 1 ? "#34d399" : "#f87171";
+          html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:${gi > 0 ? '1px solid rgba(255,255,255,0.03)' : 'none'}">`;
+          html += `<div><span style="font-size:11px;color:#e2e8f0">${fD(g.dn.odemeTarihi)}</span> <span style="font-size:9px;color:#64748b">· ${g.h} · dönem ${fD(g.dn.baslangic)}–${fD(g.dn.bitis)}</span></div>`;
+          html += `<div style="display:flex;align-items:center;gap:8px">`;
+          html += `<span style="font-size:11px;color:#94a3b8">${fmt(g.beklenen)}</span>`;
+          if (gercek != null) html += `<span style="font-size:11px;font-weight:700;color:${farkRenk}">${fmt(gercek)} (${fark >= 0 ? '+' : ''}${fmt(fark)})</span>`;
+          else html += `<span style="font-size:10px;color:#34d399">✓ birebir</span>`;
+          html += `<span onclick="setTediyeDurum('${g.dn.bitis}','${g.h}',null,null)" title="Geri al" style="font-size:10px;color:#475569;cursor:pointer">✕</span>`;
+          html += `</div></div>`;
+        });
+        html += `</div>`;
+      }
+
+      // ── Bölüm 3: Özet ──
+      html += `<div class="sec-title" style="font-size:13px;margin-top:20px">📊 Özet</div>`;
+      var bekleyenHesap = { "4675": 0, "5994": 0 }, bekleyenGenel = 0;
+      var buAyGelen = 0, buAyBeklenen = 0;
+      tDonemler.forEach(function(dn) {
+        Object.keys(dn.hesaplar).forEach(function(h) {
+          var net = dn.hesaplar[h].net;
+          var geldi = hesapGeldiMi(dn, h);
+          if (!geldi) { if (bekleyenHesap[h] == null) bekleyenHesap[h] = 0; bekleyenHesap[h] += net; bekleyenGenel += net; }
+          if (dn.odemeTarihi.substring(0, 7) === tBuAy) {
+            buAyBeklenen += net;
+            if (geldi) buAyGelen += (dn.durum[h].gercekTutar != null ? dn.durum[h].gercekTutar : net);
+          }
+        });
+      });
+      html += `<div class="card" style="margin-bottom:8px">`;
+      html += `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px">`;
+      html += `<div style="padding:8px;border-radius:8px;background:rgba(168,85,247,0.08);text-align:center"><div style="font-size:8px;color:#64748b">Bekleyen (genel)</div><div style="font-size:14px;font-weight:800;color:#c4b5fd">${fmt(bekleyenGenel)}</div></div>`;
+      html += `<div style="padding:8px;border-radius:8px;background:rgba(255,255,255,0.03);text-align:center"><div style="font-size:8px;color:#64748b">4675 bekleyen</div><div style="font-size:14px;font-weight:800;color:#f8fafc">${fmt(bekleyenHesap["4675"] || 0)}</div></div>`;
+      html += `<div style="padding:8px;border-radius:8px;background:rgba(255,255,255,0.03);text-align:center"><div style="font-size:8px;color:#64748b">5994 bekleyen</div><div style="font-size:14px;font-weight:800;color:#f8fafc">${fmt(bekleyenHesap["5994"] || 0)}</div></div>`;
+      html += `</div>`;
+      html += `<div style="display:flex;justify-content:space-between;font-size:11px;color:#94a3b8;padding-top:6px;border-top:1px solid rgba(255,255,255,0.04)"><span>Bu ay gelen: <strong style="color:#34d399">${fmt(buAyGelen)}</strong></span><span>Bu ay beklenen: <strong style="color:#e2e8f0">${fmt(buAyBeklenen)}</strong></span></div>`;
+      html += `</div>`;
+      html += `<div style="font-size:10px;color:#64748b;text-align:center;margin-bottom:14px">Ödeme günü ±1-2 gün kayabilir · 31 Tem öncesi için Flora Ödemelerim</div>`;
     }
   }
 
