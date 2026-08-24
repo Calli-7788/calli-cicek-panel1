@@ -41,7 +41,7 @@ async function handleAI() {
     "\nÇiçek(dbn sıralı): " + stats.byF.slice(0, 12).map(f => f.name + ":" + fmt(f.dbn) + "/dm," + f.d + "dm," + fmt(f.net) + "net").join("; ") +
     "\nŞube(net sıralı): " + stats.byB.slice(0, 12).map(b => b.name + ":" + fmt(b.net) + "net," + b.d + "dm," + fmt(b.dbn) + "/dm").join("; ") +
     "\nTopKombo(dbn sıralı): " + hd.slice(0, 12).map(h => h.cicek + "→" + h.sube + ":" + fmt(h.dbn) + "/dm," + h.d + "dm").join("; ") +
-    "\nGünlük: " + stats.dl.map(d => fD(d.date) + "(" + ["Paz","Pzt","Sal","Çar","Per","Cum","Cmt"][new Date(d.date+"T00:00:00").getDay()] + "):" + fmt(d.avgP) + "ort," + d.d + "dm," + fmt(d.net) + "net").join("; ") +
+    "\nGünlük: " + stats.dl.map(d => fD(d.date) + "(" + ["Paz","Pzt","Sal","Çar","Per","Cum","Cmt"][new Date(d.date+"T00:00:00").getDay()] + "):" + fmt(d.d > 0 ? d.net / d.d : 0) + "/dm," + d.d + "dm," + fmt(d.net) + "net").join("; ") +
     "\nHAFTANIN GÜNLERİ PERFORMANS (tüm veri): " + gunStr +
     (function(){
       var detail = "";
@@ -208,7 +208,8 @@ function localAnswer(q, stats, bc, hd, yoy) {
     let ans = "🔮 **Gelecek Hafta Tahmini**\n\n";
     if (stats.dl.length >= 2) {
       const f = stats.dl[0], l = stats.dl[stats.dl.length - 1];
-      const ch = f.avgP > 0 ? ((l.avgP - f.avgP) / f.avgP * 100) : 0;
+      const fDbn = f.d > 0 ? f.net / f.d : 0, lDbn = l.d > 0 ? l.net / l.d : 0;
+      const ch = fDbn > 0 ? ((lDbn - fDbn) / fDbn * 100) : 0;
       ans += "**Mevcut trend:** " + (ch > 0 ? "▲ Yükseliş" : ch < 0 ? "▼ Düşüş" : "→ Stabil") + " (" + (ch > 0 ? "+" : "") + ch.toFixed(1) + "%)\n\n";
       if (ch > 5) ans += "Fiyatlar yükselişte. Gönderim miktarını koruyabilirsin, en kârlı şubelere ağırlık ver.\n";
       else if (ch < -5) ans += "Fiyatlar düşüşte. Dikkatli ol, düşük performanslı şubelerden çek, az ama kârlı gönder.\n";
@@ -252,7 +253,7 @@ function localAnswer(q, stats, bc, hd, yoy) {
 
   // ── Şube karşılaştır ──
   if (ql.includes("şube") || ql.includes("nereye") || ql.includes("göndermeli") || ql.includes("gonder") || ql.includes("karşılaştır"))
-    return "📍 **Şube Önerisi:**\n\n" + bc.slice(0, 5).map(c => "**" + c.flower + ":**\n" + c.branches.slice(0, 3).map((b, i) => "  " + (i === 0 ? "🏆" : "  ") + " " + b.name + ": " + fmt(b.avgP) + "/dm (" + b.d + "dm)").join("\n")).join("\n\n");
+    return "📍 **Şube Önerisi:**\n\n" + bc.slice(0, 5).map(c => "**" + c.flower + ":**\n" + c.branches.slice(0, 3).map((b, i) => "  " + (i === 0 ? "🏆" : "  ") + " " + b.name + ": " + fmt(b.dbn) + "/dm net (" + b.d + "dm)").join("\n")).join("\n\n");
 
   // ── Kombo ──
   if (ql.includes("kombo") || ql.includes("kârlı") || ql.includes("karli"))
@@ -266,8 +267,9 @@ function localAnswer(q, stats, bc, hd, yoy) {
   if (ql.includes("trend") || ql.includes("fiyat") || ql.includes("yüksel") || ql.includes("düş")) {
     if (stats.dl.length < 2) return "En az 2 gün seç.";
     const f = stats.dl[0], l = stats.dl[stats.dl.length - 1];
-    const ch = f.avgP > 0 ? ((l.avgP - f.avgP) / f.avgP * 100) : 0;
-    return "📈 **Fiyat Trendi:**\n\n" + fD(f.date) + ": " + fmt(f.avgP) + " → " + fD(l.date) + ": " + fmt(l.avgP) + "\nDeğişim: **" + (ch > 0 ? "+" : "") + ch.toFixed(1) + "%**\n\n" + (ch > 0 ? "Fiyatlar yükselişte, gönderim stratejini koru." : "Fiyatlar düşüşte, düşük şubelerden çek.");
+    const fDbn = f.d > 0 ? f.net / f.d : 0, lDbn = l.d > 0 ? l.net / l.d : 0;
+    const ch = fDbn > 0 ? ((lDbn - fDbn) / fDbn * 100) : 0;
+    return "📈 **Fiyat Trendi (net/dm):**\n\n" + fD(f.date) + ": " + fmt(fDbn) + "/dm → " + fD(l.date) + ": " + fmt(lDbn) + "/dm\nDeğişim: **" + (ch > 0 ? "+" : "") + ch.toFixed(1) + "%**\n\n" + (ch > 0 ? "Fiyatlar yükselişte, gönderim stratejini koru." : "Fiyatlar düşüşte, düşük şubelerden çek.");
   }
 
   // ── Geçen yıl ──

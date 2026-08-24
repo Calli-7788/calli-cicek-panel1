@@ -249,10 +249,10 @@ function render() {
     }
 
     if (stats.dl.length > 1) {
-      const mx = Math.max(...stats.dl.map(x => x.ciro));
-      html += `<div class="card" style="margin-top:16px;margin-bottom:6px"><div style="font-size:11px;font-weight:600;color:#94a3b8;margin-bottom:10px">Günlük Ciro</div><div style="display:flex;align-items:flex-end;gap:3px;height:65px">`;
+      const mx = Math.max(...stats.dl.map(x => x.net));
+      html += `<div class="card" style="margin-top:16px;margin-bottom:6px"><div style="font-size:11px;font-weight:600;color:#94a3b8;margin-bottom:10px">Günlük Net</div><div style="display:flex;align-items:flex-end;gap:3px;height:65px">`;
       stats.dl.forEach(d => {
-        const h = mx > 0 ? (d.ciro / mx) * 65 : 3;
+        const h = mx > 0 ? (d.net / mx) * 65 : 3;
         html += `<div style="flex:1;text-align:center"><div style="height:${Math.max(3,h)}px;border-radius:3px 3px 1px 1px;background:linear-gradient(to top,rgba(34,197,94,0.2),rgba(34,197,94,0.4));margin-bottom:3px"></div><div style="font-size:7px;color:#475569">${fD(d.date)}</div></div>`;
       });
       html += `</div></div>`;
@@ -276,7 +276,7 @@ function render() {
       const isChartOpen = state.chartOpen === "flower:" + f.name;
       const borderStyle = isChartOpen ? "border-color:rgba(34,197,94,0.2)" : "";
       html += `<div class="card" style="margin-bottom:6px;padding:12px 14px;cursor:pointer;${borderStyle}" onclick="toggleChart('flower','${esc(f.name)}')">`;
-      html += `<div class="rank-item"><div style="display:flex;align-items:center;gap:8px"><div class="rank-num" style="background:${i<3?bgs[i]:'rgba(255,255,255,0.04)'};color:${i<3?colors[i]:'#64748b'}">${i+1}</div><div><div style="font-size:12px;font-weight:600;color:#f8fafc">${esc(f.name)}</div><div style="font-size:10px;color:#64748b">${f.d}dm · ${fmt(f.avgP)}</div></div></div><div style="text-align:right;display:flex;align-items:center;gap:6px"><div><div style="font-size:14px;font-weight:700;color:#34d399">${fmt(f.dbn)}</div><div style="font-size:9px;color:#64748b">dm başı net</div></div><div style="font-size:10px;color:#475569">${isChartOpen?'▲':'▼'}</div></div></div>`;
+      html += `<div class="rank-item"><div style="display:flex;align-items:center;gap:8px"><div class="rank-num" style="background:${i<3?bgs[i]:'rgba(255,255,255,0.04)'};color:${i<3?colors[i]:'#64748b'}">${i+1}</div><div><div style="font-size:12px;font-weight:600;color:#f8fafc">${esc(f.name)}</div><div style="font-size:10px;color:#64748b">${f.d}dm · ${fmt(f.net)} net</div></div></div><div style="text-align:right;display:flex;align-items:center;gap:6px"><div><div style="font-size:14px;font-weight:700;color:#34d399">${fmt(f.dbn)}</div><div style="font-size:9px;color:#64748b">dm başı net</div></div><div style="font-size:10px;color:#475569">${isChartOpen?'▲':'▼'}</div></div></div>`;
       if (isChartOpen) {
         html += `<div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">`;
         html += buildLineChart(f.name, "c");
@@ -293,7 +293,7 @@ function render() {
       const isChartOpen = state.chartOpen === "branch:" + b.name;
       const borderStyle = isChartOpen ? "border-color:rgba(34,197,94,0.2)" : "";
       html += `<div class="card" style="margin-bottom:6px;padding:12px 14px;cursor:pointer;${borderStyle}" onclick="toggleChart('branch','${esc(b.name)}')">`;
-      html += `<div style="display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:13px;font-weight:600;color:#f8fafc">${esc(b.name)}</div><div style="font-size:10px;color:#64748b">${b.d}dm · ${fmt2(b.avgP)}</div></div><div style="text-align:right;display:flex;align-items:center;gap:6px"><div style="font-size:13px;font-weight:700;color:#34d399">${fmt(b.net)}</div><div style="font-size:10px;color:#475569">${isChartOpen?'▲':'▼'}</div></div></div>`;
+      html += `<div style="display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:13px;font-weight:600;color:#f8fafc">${esc(b.name)}</div><div style="font-size:10px;color:#64748b">${b.d}dm · ${fmt2(b.dbn)}/dm</div></div><div style="text-align:right;display:flex;align-items:center;gap:6px"><div style="font-size:13px;font-weight:700;color:#34d399">${fmt(b.net)}</div><div style="font-size:10px;color:#475569">${isChartOpen?'▲':'▼'}</div></div></div>`;
       html += `<div class="bar-bg"><div class="bar-fill" style="width:${w}%"></div></div>`;
       if (isChartOpen) {
         html += `<div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">`;
