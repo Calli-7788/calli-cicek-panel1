@@ -39,7 +39,10 @@ window.state = {
   giderSube: null,  // Giderler sekmesi böl.4 şube filtresi
   tediyeForm: null, // Tediye "geldi" inline formu açık olan dönem|hesap anahtarı
   mezatSube: null,  // Mezat grafiği şube chip'i (null = Tümü)
-  mezatLegend: null // Mezat grafiği çizgi aç/kapa durumu (ilk kullanımda varsayılan atanır)
+  mezatLegend: null, // Mezat grafiği çizgi aç/kapa durumu (ilk kullanımda varsayılan atanır)
+  btPencere: "v2",   // Backtest penceresi: "v2" | "60"
+  btMod: "tavanli",  // Backtest modu: "tavanli" (varsayılan) | "tavansiz"
+  btKosuyor: false   // Çalıştır sırasında buton kilidi
 };
 
 function setState(updates) {

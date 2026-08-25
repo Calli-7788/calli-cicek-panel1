@@ -33,6 +33,7 @@ window.BT_SABITLER = {
   minMezatGun: 10             // çiçek evreni eşiği (pencere içi)
 };
 window.BT_KUTU_SABIT = null;  // null = veri türevi (t-öncesi medyan satır demeti); sayı = sabit kutu override
+window.BT_TAVAN_K = 2;        // Tavanlı mod: şube ataması ≤ K × (o gün o şubedeki gerçek demet)
 
 // ═══════════════ MEVSİMSELLİK ═══════════════
 window.OZEL_GUNLER = [

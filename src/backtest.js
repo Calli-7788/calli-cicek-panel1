@@ -108,9 +108,10 @@ function btKomboFeature(st, t, gecenYilRows) {
 // ── Tek model dağıtımı: kutu-kutu greedy ──
 // modelTip: "A1" (skor=genel, kapasitesiz) | "A0" (genel + tarihsel max sınır, çarpansız)
 //           "B" (katmanlı, kapasitesiz) | "C" (katmanlı × doygunluk) | "D" (C + ceza + güven filtresi)
-// KAPALI EVREN T4 kuralı: mal kaybolmaz — kapasiteli modellerde tüm kombolar kapanırsa
-// kalan kutular en yüksek skorlu komboya taşar (overflow), güven filtresi yok sayılır.
-function btDagit(modelTip, adaylar, kutular) {
+// tavan (C-EK-1): şube → BT_TAVAN_K × gerçek demet üst sınırı (5 modele AYNI); null = tavansız.
+// T4 kuralları: mal kaybolmaz — model kısıtları tıkanırsa kutu tavana uyan en iyi skorluya taşar;
+// hiçbir aday kutuyu alamıyorsa kalan mal adaylara gerçek-demet oranlarında dağıtılır.
+function btDagit(modelTip, adaylar, kutular, tavan) {
   var K = window.BT_SABITLER;
   var atanan = {};
   adaylar.forEach(function(a) { atanan[a.sube] = 0 });
@@ -121,7 +122,9 @@ function btDagit(modelTip, adaylar, kutular) {
 
     adaylar.forEach(function(a) {
       var f = a.f;
-      var skor, uygun = true;
+      var kap = tavan ? tavan[a.sube] : Infinity;
+      var tavanUygun = atanan[a.sube] + kutuD <= kap + 1e-9;   // tavana çarpan kutu bir sonrakine akar
+      var skor, uygun = tavanUygun;
       if (modelTip === "A1") {
         skor = f.genel || 0;
       } else if (modelTip === "A0") {
@@ -141,13 +144,23 @@ function btDagit(modelTip, adaylar, kutular) {
           if (f.guvenSkor < K.guvenEsik) uygun = false;      // düşük güven atama almaz
         }
       }
-      // Fallback skoru (overflow): kapasite/güven kısıtı yok sayılır
+      // Fallback (overflow): model kapasite/güven kısıtı yok sayılır ama TAVAN her zaman bağlar
       var fbSkor = modelTip === "A1" || modelTip === "A0" ? (f.genel || 0) : (f.katmanli || 0);
-      if (!enIyiFallback || fbSkor > enIyiFallback.skor) enIyiFallback = { sube: a.sube, skor: fbSkor };
+      if (tavanUygun && (!enIyiFallback || fbSkor > enIyiFallback.skor)) enIyiFallback = { sube: a.sube, skor: fbSkor };
       if (uygun && (!enIyi || skor > enIyi.skor)) enIyi = { sube: a.sube, skor: skor };
     });
 
-    var hedef = enIyi || enIyiFallback;   // T4: mal kaybolmaz
+    var hedef = enIyi || enIyiFallback;
+    if (!hedef) {
+      // Tüm adaylar tavanda: kalan mal gerçek-demet oranlarında dağıtılır (T4 mutabakat korunur)
+      var kalan = 0;
+      for (var kj = bi; kj < kutular.length; kj++) kalan += kutular[kj];
+      var gdToplam = adaylar.reduce(function(s, a) { return s + a.gercekD }, 0);
+      adaylar.forEach(function(a) {
+        atanan[a.sube] += kalan * (gdToplam > 0 ? a.gercekD / gdToplam : 1 / adaylar.length);
+      });
+      break;
+    }
     atanan[hedef.sube] += kutuD;
   }
   return atanan;
@@ -240,8 +253,15 @@ function runBacktest(pencere, opts) {
           // T1: state'e t veya sonrası tarihli kayıt girmemiş olmalı
           t1AssertSayisi++;
           if (st.sonTarih >= t && st.sonTarih !== "") t1Ihlal++;
-          return { sube: s, gercekDbn: subeler[s].d > 0 ? subeler[s].net / subeler[s].d : 0, f: btKomboFeature(st, t, komboGecmisYil[kk]) };
+          return { sube: s, gercekD: subeler[s].d, gercekDbn: subeler[s].d > 0 ? subeler[s].net / subeler[s].d : 0, f: btKomboFeature(st, t, komboGecmisYil[kk]) };
         });
+
+        // C-EK-1: hacim tavanı (tavanlı modda 5 modele AYNI tavanlar)
+        var tavan = null;
+        if (opts.tavanli) {
+          tavan = {};
+          adaylar.forEach(function(a) { tavan[a.sube] = window.BT_TAVAN_K * a.gercekD });
+        }
 
         // Kutu: t-öncesi medyan satır demeti, clamp [8,40] (override: BT_KUTU_SABIT)
         var kutu;
@@ -254,21 +274,24 @@ function runBacktest(pencere, opts) {
         var kutuSayisi = Math.ceil(D_tc / kutu);
         for (var ki = 0; ki < kutuSayisi; ki++) kutular.push(ki === kutuSayisi - 1 ? D_tc - kutu * (kutuSayisi - 1) : kutu);
 
-        // T2 fairness: kesit imzası (aday+kutu+feature sayaçları) model koşumları öncesi/sonrası aynı
-        var imza = JSON.stringify(adaylar.map(function(a) { return [a.sube, a.f.nGun, a.f.sonTarih, +(a.f.katmanli || 0).toFixed(6)] })) + "|" + JSON.stringify(kutular);
+        // T2 fairness: kesit imzası (aday+kutu+tavan+feature sayaçları) model koşumları öncesi/sonrası aynı
+        var imzaYap = function() {
+          return JSON.stringify(adaylar.map(function(a) { return [a.sube, a.f.nGun, a.f.sonTarih, +(a.f.katmanli || 0).toFixed(6)] })) + "|" + JSON.stringify(kutular) + "|" + JSON.stringify(tavan);
+        };
+        var imza = imzaYap();
 
         var modelSonuc = {};
         modelAdlari.forEach(function(m) {
-          var atama = btDagit(m, adaylar, kutular);
+          var atama = btDagit(m, adaylar, kutular, tavan);
           var sim = 0, atananToplam = 0;
           adaylar.forEach(function(a) { sim += (atama[a.sube] || 0) * a.gercekDbn; atananToplam += atama[a.sube] || 0; });
-          // T4: mal kaybolmaz/çoğalmaz
+          // T4: mal kaybolmaz/çoğalmaz (pro-rata kesirleri için kuruş toleransı)
           t4AssertSayisi++;
-          if (atananToplam !== D_tc) t4Ihlal++;
+          if (Math.abs(atananToplam - D_tc) > 0.01) t4Ihlal++;
           modelSonuc[m] = { sim: sim, atama: atama };
         });
 
-        var imza2 = JSON.stringify(adaylar.map(function(a) { return [a.sube, a.f.nGun, a.f.sonTarih, +(a.f.katmanli || 0).toFixed(6)] })) + "|" + JSON.stringify(kutular);
+        var imza2 = imzaYap();
         t2AssertSayisi++;
         if (imza !== imza2) t2Ihlal++;
 
@@ -356,7 +379,8 @@ function runBacktest(pencere, opts) {
   };
 
   return {
-    pencere: pencere, gunSayisi: gunluk.length, cicekSayisi: evren.length, evren: evren,
+    pencere: pencere, mod: opts.tavanli ? "tavanli" : "tavansiz",
+    gunSayisi: gunluk.length, cicekSayisi: evren.length, evren: evren,
     sure_ms: Date.now() - t0,
     gercekNet: gercekNet, gercekDbn: toplamD > 0 ? gercekNet / toplamD : 0, toplamD: toplamD,
     modeller: mo,
@@ -395,6 +419,24 @@ function btCacheOku(pencere) {
     c[pencere].guncel = c[pencere].imza === btVeriImza();
     return c[pencere];
   } catch (e) { return null; }
+}
+
+// Ekran "Çalıştır" tetikleyicisi — seçili pencere için İKİ modu da hesaplar ve cache'ler
+function btCalistir() {
+  var p = state.btPencere || "v2";
+  state.btKosuyor = true;
+  render();
+  setTimeout(function() {
+    try {
+      btCacheKaydet(p + "|tavanli", runBacktest(p, { tavanli: true }));
+      btCacheKaydet(p + "|tavansiz", runBacktest(p, { tavanli: false }));
+    } catch (e) {
+      console.error("Backtest hatası:", e);
+      alert("Backtest hatası: " + e.message);
+    }
+    state.btKosuyor = false;
+    render();
+  }, 30);
 }
 
 // ═══════════════ ZORUNLU TESTLER ═══════════════
