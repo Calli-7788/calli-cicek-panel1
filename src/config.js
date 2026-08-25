@@ -23,6 +23,17 @@ window.V2_CUTOFF = "2026-07-31";
 // atanan ≤ median → 1.00 | median–P75 lineer → 0.85 | P75–max lineer → 0.70 | > max → kombo kapanır
 window.PLANNER_SATURATION = { medianCarpan: 1.0, p75Carpan: 0.85, maxCarpan: 0.70 };
 
+// Paket 2 — Backtest sabitleri. Değerler planner.js'teki literallerle BİREBİR aynı
+// (planner.js'e dokunulmadı; iki motorun aynı sabitleri kullanması için burada merkezileştirildi).
+window.BT_SABITLER = {
+  katmanAgirlik: { son2: 0.45, son68: 0.25, genel: 0.20, gecenYil: 0.10 },
+  kCeza: 0.5,                 // Model D belirsizlik cezası (balanced k)
+  guvenEsik: 40,              // güven skoru < 40 = Düşük → Model D'de atama almaz
+  kutuMin: 8, kutuMax: 40,    // kutu clamp (UI seçenekleri 8-40 aralığında)
+  minMezatGun: 10             // çiçek evreni eşiği (pencere içi)
+};
+window.BT_KUTU_SABIT = null;  // null = veri türevi (t-öncesi medyan satır demeti); sayı = sabit kutu override
+
 // ═══════════════ MEVSİMSELLİK ═══════════════
 window.OZEL_GUNLER = [
   { tarih: "01-01", ad: "Yılbaşı", oncesi: 7 },
