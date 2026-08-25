@@ -313,3 +313,99 @@ function getYoY(filtered) {
     flowers, branches
   };
 }
+
+// ═══════════════ MEZAT FİYAT SERİSİ (Paket 1 — saf görselleştirme/metrik katmanı) ═══════════════
+// Mevcut EMA'lara (seasonal/forecast) ve hesap fonksiyonlarına DOKUNMAZ.
+// Outlier'lar YALNIZCA işaretlenir — hiçbir hesaptan çıkarılmaz.
+function getMezatSerisi(cicek, sube, sonN) {
+  sonN = sonN || 30;
+  const rows = ALL_DATA.filter(r => r.c === cicek && (!sube || r.s === sube));
+  const gunMap = {};
+  rows.forEach(r => {
+    if (!gunMap[r.t]) gunMap[r.t] = { net: 0, d: 0, v2: false };
+    gunMap[r.t].net += r.net; gunMap[r.t].d += r.d;
+    if (r.costModel === "v2") gunMap[r.t].v2 = true;
+  });
+  const seri = Object.entries(gunMap)
+    .map(([t, v]) => ({ t, dbn: v.d > 0 ? v.net / v.d : 0, d: v.d, v2: v.v2, outlier: false }))
+    .filter(p => p.dbn > 0)
+    .sort((a, b) => a.t.localeCompare(b.t))
+    .slice(-sonN);
+  const n = seri.length;
+  const dbns = seri.map(p => p.dbn);
+
+  // MAD outlier (Iglewicz-Hoaglin, |z|>3.5) — n≥7, MAD=0 ise test atlanır
+  if (n >= 7) {
+    const sorted = dbns.slice().sort((a, b) => a - b);
+    const med = arr => arr.length % 2 ? arr[(arr.length - 1) / 2] : (arr[arr.length / 2 - 1] + arr[arr.length / 2]) / 2;
+    const M = med(sorted);
+    const madSorted = dbns.map(x => Math.abs(x - M)).sort((a, b) => a - b);
+    const MAD = med(madSorted);
+    if (MAD > 0) {
+      seri.forEach(p => { if (Math.abs(0.6745 * (p.dbn - M) / MAD) > 3.5) p.outlier = true; });
+    }
+  }
+
+  // SMA_k — i < k-1 indekslerinde null (kısmi pencere hesaplanmaz)
+  const smaArr = k => dbns.map((_, i) => {
+    if (i < k - 1) return null;
+    let s = 0; for (let j = i - k + 1; j <= i; j++) s += dbns[j];
+    return s / k;
+  });
+  const sma = { 3: smaArr(3), 5: smaArr(5), 10: smaArr(10), 20: smaArr(20) };
+
+  // EWMA — E[0] = ilk değer (sabit kural), alpha sabit (adaptif YOK)
+  const ewmaArr = alpha => {
+    if (n === 0) return [];
+    const out = [dbns[0]];
+    for (let i = 1; i < n; i++) out.push(alpha * dbns[i] + (1 - alpha) * out[i - 1]);
+    return out;
+  };
+  const ewma = { fast: ewmaArr(0.35), mid: ewmaArr(0.18) };
+
+  // Trend eğimi — son min(10,n) mezata OLS; n<6 → null; 6-9 → kısa seri etiketi
+  let slope = null, slopeYon = null, slopeKisa = false;
+  if (n >= 6) {
+    const win = dbns.slice(-Math.min(10, n));
+    const m = win.length; slopeKisa = m < 10;
+    const xbar = (m - 1) / 2;
+    const ybar = win.reduce((s, x) => s + x, 0) / m;
+    let num = 0, den = 0;
+    win.forEach((y, i) => { num += (i - xbar) * (y - ybar); den += (i - xbar) * (i - xbar); });
+    slope = den > 0 ? num / den : 0;
+    slopeYon = Math.abs(slope) < 0.005 * ybar ? "yatay" : slope > 0 ? "yükseliş" : "düşüş";
+  }
+
+  // Momentum ROC3 — n≥4; son nokta outlier ise uyarı
+  let roc3 = null, roc3Uyari = false;
+  if (n >= 4 && dbns[n - 4] > 0) {
+    roc3 = (dbns[n - 1] - dbns[n - 4]) / dbns[n - 4] * 100;
+    roc3Uyari = seri[n - 1].outlier;
+  }
+
+  // Volatilite CV — son min(10,n); n<6 → null
+  let cv = null, cvKisa = false;
+  if (n >= 6) {
+    const w = dbns.slice(-Math.min(10, n)); cvKisa = w.length < 10;
+    const mu = w.reduce((s, x) => s + x, 0) / w.length;
+    const sd = Math.sqrt(w.reduce((s, x) => s + Math.pow(x - mu, 2), 0) / w.length);
+    cv = mu > 0 ? sd / mu * 100 : null;
+  }
+
+  // Fan/yapı etiketi
+  let fan = null;
+  if (slopeYon !== null) {
+    if (n >= 20) {
+      const s3 = sma[3][n - 1], s5 = sma[5][n - 1], s10 = sma[10][n - 1], s20 = sma[20][n - 1];
+      if (s3 > s5 && s5 > s10 && s10 > s20 && slopeYon === "yükseliş") fan = "güçlü yükseliş";
+      else if (s3 < s5 && s5 < s10 && s10 < s20 && slopeYon === "düşüş") fan = "güçlü düşüş";
+      else if (slopeYon === "yükseliş") fan = "zayıf yükseliş";
+      else if (slopeYon === "düşüş") fan = "zayıf düşüş";
+      else fan = "yatay/karışık";
+    } else {
+      fan = (slopeYon === "yatay" ? "yatay/karışık" : slopeYon) + " (kısa seri)";
+    }
+  }
+
+  return { seri, sma, ewma, slope, slopeYon, slopeKisa, roc3, roc3Uyari, cv, cvKisa, fan, n };
+}

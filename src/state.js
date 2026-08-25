@@ -37,7 +37,9 @@ window.state = {
   caSearch: "",
   riskGruplar: null,
   giderSube: null,  // Giderler sekmesi böl.4 şube filtresi
-  tediyeForm: null  // Tediye "geldi" inline formu açık olan dönem|hesap anahtarı
+  tediyeForm: null, // Tediye "geldi" inline formu açık olan dönem|hesap anahtarı
+  mezatSube: null,  // Mezat grafiği şube chip'i (null = Tümü)
+  mezatLegend: null // Mezat grafiği çizgi aç/kapa durumu (ilk kullanımda varsayılan atanır)
 };
 
 function setState(updates) {

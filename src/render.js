@@ -1,4 +1,88 @@
 // ═══════════════ RENDER HELPERS ═══════════════
+// ═══════ Mezat Fiyat Grafiği yardımcıları (Paket 1) ═══════
+function mezatLegendToggle(key) {
+  state.mezatLegend[key] = !state.mezatLegend[key];
+  render();
+}
+
+function buildMezatChart(ms) {
+  const vis = state.mezatLegend;
+  const n = ms.n;
+  const W = 360, PXL = 34, PXR = 8, PY = 8;
+  const HP = 118;                 // fiyat alanı
+  const HV = 26;                  // hacim mini-bandı (~%20, bağımsız ölçek)
+  const XL = 14;                  // x etiket şeridi
+  const H = HP + HV + XL;
+  const xs = i => PXL + (n === 1 ? 0 : (i / (n - 1)) * (W - PXL - PXR));
+
+  // Y ölçeği görünür katmanlardan
+  let vals = ms.seri.map(p => p.dbn);
+  if (vis.ewmaFast) vals = vals.concat(ms.ewma.fast);
+  if (vis.ewmaMid) vals = vals.concat(ms.ewma.mid);
+  [3, 5, 10, 20].forEach(k => { if (vis["sma" + k]) vals = vals.concat(ms.sma[k].filter(v => v !== null)); });
+  const minV = Math.min.apply(null, vals) * 0.95;
+  const maxV = Math.max.apply(null, vals) * 1.05;
+  const range = maxV - minV || 1;
+  const ys = v => PY + (HP - 2 * PY) - ((v - minV) / range) * (HP - 2 * PY);
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">`;
+
+  // Yatay ızgara + y etiketleri
+  [minV, (minV + maxV) / 2, maxV].forEach(v => {
+    svg += `<line x1="${PXL}" y1="${ys(v)}" x2="${W - PXR}" y2="${ys(v)}" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>`;
+    svg += `<text x="${PXL - 4}" y="${ys(v) + 3}" text-anchor="end" font-size="7" fill="#475569">${new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 0 }).format(v)}</text>`;
+  });
+
+  // Hacim bandı (bağımsız ölçek)
+  const maxD = Math.max.apply(null, ms.seri.map(p => p.d)) || 1;
+  const barW = Math.max(2, Math.min(8, (W - PXL - PXR) / n * 0.55));
+  ms.seri.forEach((p, i) => {
+    const bh = Math.max(1, (p.d / maxD) * (HV - 4));
+    svg += `<rect x="${xs(i) - barW / 2}" y="${HP + (HV - bh)}" width="${barW}" height="${bh}" fill="rgba(96,165,250,0.28)"><title>${fD(p.t)} · ${p.d} dm</title></rect>`;
+  });
+  svg += `<text x="${PXL - 4}" y="${HP + HV - 2}" text-anchor="end" font-size="6" fill="#475569">dm</text>`;
+
+  // Null atlayan çizgi çizici (SMA'ların ilk k-1 noktası boş)
+  const lineFrom = (arr, color, width, dash) => {
+    let d = "", pen = false;
+    arr.forEach((v, i) => {
+      if (v === null || v === undefined) { pen = false; return; }
+      d += (pen ? " L " : " M ") + xs(i).toFixed(1) + " " + ys(v).toFixed(1);
+      pen = true;
+    });
+    return d ? `<path d="${d}" fill="none" stroke="${color}" stroke-width="${width}"${dash ? ' stroke-dasharray="' + dash + '"' : ''}/>` : "";
+  };
+
+  // Arkadan öne: SMA20, SMA10, SMA3, SMA5, EWMA orta, EWMA hızlı
+  if (vis.sma20) svg += lineFrom(ms.sma[20], "#94a3b8", 1, "3,2");
+  if (vis.sma10) svg += lineFrom(ms.sma[10], "#2dd4bf", 1, "3,2");
+  if (vis.sma3) svg += lineFrom(ms.sma[3], "#f472b6", 1, "3,2");
+  if (vis.sma5) svg += lineFrom(ms.sma[5], "#60a5fa", 1.2, "4,2");
+  if (vis.ewmaMid) svg += lineFrom(ms.ewma.mid, "#a78bfa", 1.3);
+  if (vis.ewmaFast) svg += lineFrom(ms.ewma.fast, "#fbbf24", 1.3);
+
+  // Fiyat çizgisi + noktalar (v1: soluk içi boş · v2: dolu · outlier: kırmızı halka)
+  if (vis.fiyat) {
+    svg += lineFrom(ms.seri.map(p => p.dbn), "#34d399", 1.6);
+    ms.seri.forEach((p, i) => {
+      const tip = `${fD(p.t)} · ${fmt(p.dbn)}/dm · ${p.d} dm${p.outlier ? " · aykırı" : ""}${!p.v2 ? " · tahmini net (v1)" : ""}`;
+      let dot;
+      if (p.outlier) dot = `<circle cx="${xs(i)}" cy="${ys(p.dbn)}" r="4" fill="none" stroke="#f87171" stroke-width="1.5">`;
+      else if (p.v2) dot = `<circle cx="${xs(i)}" cy="${ys(p.dbn)}" r="2.6" fill="#34d399">`;
+      else dot = `<circle cx="${xs(i)}" cy="${ys(p.dbn)}" r="2.6" fill="none" stroke="rgba(52,211,153,0.45)" stroke-width="1.2">`;
+      svg += dot + `<title>${tip}</title></circle>`;
+    });
+  }
+
+  // X etiketleri: ilk / orta / son
+  [0, Math.floor((n - 1) / 2), n - 1].filter((v, i, a) => a.indexOf(v) === i).forEach(i => {
+    svg += `<text x="${xs(i)}" y="${HP + HV + 10}" text-anchor="middle" font-size="7" fill="#475569">${fD(ms.seri[i].t)}</text>`;
+  });
+
+  svg += `</svg>`;
+  return svg;
+}
+
 function buildLineChart(key, type) {
   // key = flower name or branch name, type = "c" for flower, "s" for branch
   const data = getFiltered().filter(r => r[type] === key);
@@ -1421,6 +1505,74 @@ function render() {
     if (secili) {
       if (!state.caSecim) state.caSecim = secili.cicek;
       const cicekMevsim = secili.aylar;
+
+      // ── 📈 Mezat Fiyat Grafiği (Paket 1) ──
+      if (!state.mezatLegend) state.mezatLegend = { fiyat: true, ewmaFast: true, ewmaMid: true, sma5: true, sma3: false, sma10: false, sma20: false };
+      const mzSubeMap = {};
+      ALL_DATA.forEach(r => { if (r.c === secili.cicek) mzSubeMap[r.s] = (mzSubeMap[r.s] || 0) + r.d; });
+      const mzSubeler = Object.entries(mzSubeMap).sort((a, b) => b[1] - a[1]).map(e => e[0]);
+      const mzSube = state.mezatSube && mzSubeler.includes(state.mezatSube) ? state.mezatSube : null;
+      const ms = getMezatSerisi(secili.cicek, mzSube, 30);
+
+      html += `<div class="card" style="margin-bottom:14px">`;
+      html += `<div style="font-size:13px;font-weight:700;color:#f8fafc;margin-bottom:8px">📈 Mezat Fiyat Grafiği <span style="font-size:9px;color:#64748b;font-weight:400">son ${ms.n} mezat günü</span></div>`;
+
+      // Şube chip'leri
+      html += `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px">`;
+      const mzChip = (label, val) => {
+        const aktif = mzSube === val;
+        return `<button onclick="setState({mezatSube:${val === null ? 'null' : "'" + esc(val) + "'"}})" style="padding:4px 9px;border-radius:6px;border:1px solid ${aktif ? '#7c3aed' : 'rgba(255,255,255,0.08)'};background:${aktif ? 'rgba(124,58,237,0.2)' : 'rgba(255,255,255,0.04)'};color:${aktif ? '#c4b5fd' : '#94a3b8'};font-size:9px;cursor:pointer;font-weight:${aktif ? '700' : '400'}">${esc(label)}</button>`;
+      };
+      html += mzChip("Tümü", null);
+      mzSubeler.slice(0, 12).forEach(s => { html += mzChip(s, s); });
+      html += `</div>`;
+
+      if (ms.n < 5) {
+        html += `<div style="padding:20px;text-align:center;font-size:12px;color:#fbbf24">Bu çiçek/şube için yetersiz mezat verisi (n=${ms.n})</div>`;
+      } else {
+        // Metrik şeridi — 5 kompakt kutu (null → gri "yetersiz veri")
+        const son = ms.seri[ms.n - 1];
+        const mBox = (label, val, sub, renk) => `<div style="flex:1;min-width:98px;padding:6px 8px;border-radius:8px;background:${val === null ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.03)'};border:1px solid rgba(255,255,255,0.05)"><div style="font-size:7px;color:#64748b;text-transform:uppercase">${label}</div><div style="font-size:11px;font-weight:700;color:${val === null ? '#475569' : (renk || '#e2e8f0')}">${val === null ? 'yetersiz veri' : val}</div>${sub && val !== null ? `<div style="font-size:7px;color:#64748b">${sub}</div>` : ''}</div>`;
+        const egimOk = ms.slopeYon === "yükseliş" ? "▲" : ms.slopeYon === "düşüş" ? "▼" : "→";
+        const egimRenk = ms.slopeYon === "yükseliş" ? "#34d399" : ms.slopeYon === "düşüş" ? "#f87171" : "#94a3b8";
+        html += `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px">`;
+        html += mBox("Son", `${fmt(son.dbn)}/dm`, fD(son.t) + (son.v2 ? "" : " · tahmini"), "#34d399");
+        html += mBox("Eğim", ms.slope === null ? null : `${ms.slope >= 0 ? "+" : ""}${new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 1 }).format(ms.slope)} ₺/mezat ${egimOk}`, ms.slopeKisa ? "kısa seri" : null, egimRenk);
+        html += mBox("Momentum", ms.roc3 === null ? null : `${ms.roc3 >= 0 ? "+" : ""}%${Math.abs(ms.roc3).toFixed(0)}`, ms.roc3Uyari ? "⚠ aykırı son fiyat etkisi" : "son 3 mezat", ms.roc3 >= 0 ? "#34d399" : "#f87171");
+        html += mBox("Volatilite", ms.cv === null ? null : `%${ms.cv.toFixed(0)}`, ms.cvKisa ? "kısa seri" : "son 10 mezat", ms.cv !== null && ms.cv > 30 ? "#fbbf24" : "#e2e8f0");
+        html += mBox("Yapı", ms.fan, null, ms.fan && ms.fan.includes("yükseliş") ? "#34d399" : ms.fan && ms.fan.includes("düşüş") ? "#f87171" : "#94a3b8");
+        html += `</div>`;
+
+        // Grafik
+        html += buildMezatChart(ms);
+
+        // Legend — aç/kapa toggle (yetersiz SMA'lar soluk/pasif)
+        const legendTanim = [
+          ["fiyat", "Fiyat", "#34d399", true],
+          ["ewmaFast", "EWMA hızlı", "#fbbf24", true],
+          ["ewmaMid", "EWMA orta", "#a78bfa", true],
+          ["sma5", "SMA5", "#60a5fa", ms.n >= 5],
+          ["sma3", "SMA3", "#f472b6", ms.n >= 3],
+          ["sma10", "SMA10", "#2dd4bf", ms.n >= 10],
+          ["sma20", "SMA20", "#94a3b8", ms.n >= 20]
+        ];
+        html += `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">`;
+        legendTanim.forEach(([key, ad, renk, uygun]) => {
+          const acik = state.mezatLegend[key];
+          if (!uygun) {
+            html += `<span style="display:flex;align-items:center;gap:3px;font-size:8px;color:#334155"><span style="width:8px;height:2px;background:#334155;display:inline-block"></span>${ad}</span>`;
+          } else {
+            html += `<span onclick="mezatLegendToggle('${key}')" style="display:flex;align-items:center;gap:3px;font-size:8px;color:${acik ? '#cbd5e1' : '#475569'};cursor:pointer;${acik ? '' : 'text-decoration:line-through'}"><span style="width:8px;height:2px;background:${acik ? renk : '#475569'};display:inline-block"></span>${ad}</span>`;
+          }
+        });
+        html += `</div>`;
+
+        // v1 dipnotu
+        if (ms.seri.some(p => !p.v2)) {
+          html += `<div style="font-size:8px;color:#475569;margin-top:6px">ℹ 31 Tem öncesi noktalar tahmini %20 net modeliyle (içi boş)</div>`;
+        }
+      }
+      html += `</div>`;
 
       // ── Aylık Mevsimsel Endeks (çiçek bazlı) ──
       html += `<div class="card" style="margin-bottom:14px"><div style="font-size:13px;font-weight:700;color:#c4b5fd;margin-bottom:8px">📊 ${esc(secili.cicek)} — Aylık Mevsimsel Endeks</div>`;
