@@ -257,10 +257,12 @@ function runBacktest(pencere, opts) {
         });
 
         // C-EK-1: hacim tavanı (tavanlı modda 5 modele AYNI tavanlar)
+        // Tavan katsayısı parametrik (duyarlılık analizi); varsayılan config BT_TAVAN_K
         var tavan = null;
         if (opts.tavanli) {
+          var tavanK = opts.tavanK != null ? opts.tavanK : window.BT_TAVAN_K;
           tavan = {};
-          adaylar.forEach(function(a) { tavan[a.sube] = window.BT_TAVAN_K * a.gercekD });
+          adaylar.forEach(function(a) { tavan[a.sube] = tavanK * a.gercekD });
         }
 
         // Kutu: t-öncesi medyan satır demeti, clamp [8,40] (override: BT_KUTU_SABIT)
@@ -435,6 +437,31 @@ function btCalistir() {
       alert("Backtest hatası: " + e.message);
     }
     state.btKosuyor = false;
+    render();
+  }, 30);
+}
+
+// 🎛 Tavan duyarlılık analizi — yalnız V2 penceresi; k ∈ {1.0..3.0} + tavansız.
+// Her koşum runBacktest'ten geçer → T1/T2/T4 otomatik işler.
+function btDuyarlilikCalistir() {
+  state.btDuyarKosuyor = true;
+  render();
+  setTimeout(function() {
+    try {
+      var kList = [1.0, 1.5, 2.0, 2.5, 3.0];
+      var satirlar = kList.map(function(k) {
+        var r = runBacktest("v2", { tavanli: true, tavanK: k });
+        btCacheKaydet("v2|duyar|k" + k.toFixed(1), r);
+        return { k: k, Dpct: r.modeller.D.upliftPct, Bpct: r.modeller.B.upliftPct, DvsA0tl: r.pratik.DvsA0.tl, DvsA0pct: r.pratik.DvsA0.pct, testler: r.testler };
+      });
+      var ts = runBacktest("v2", { tavanli: false });
+      satirlar.push({ k: null, Dpct: ts.modeller.D.upliftPct, Bpct: ts.modeller.B.upliftPct, DvsA0tl: ts.pratik.DvsA0.tl, DvsA0pct: ts.pratik.DvsA0.pct, testler: ts.testler });
+      btCacheKaydet("v2|duyarlilik", { satirlar: satirlar });
+    } catch (e) {
+      console.error("Duyarlılık hatası:", e);
+      alert("Duyarlılık hatası: " + e.message);
+    }
+    state.btDuyarKosuyor = false;
     render();
   }, 30);
 }

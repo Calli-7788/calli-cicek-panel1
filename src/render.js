@@ -714,6 +714,32 @@ function render() {
         // Alt sınır notu
         html += `<div style="font-size:8px;color:#475569;margin-top:8px;line-height:1.5">ℹ Kapalı evren + naive varsayım: rakamlar potansiyel üst sınırdır; model kıyası (göreli) daha güvenilirdir. Yeni şube keşfinin değerini ölçmez. Tavanlı mod: gözlenen talebin en fazla ${window.BT_TAVAN_K} katının aynı fiyattan emilebildiği varsayımı. Tavansız mod teorik üst sınırdır.${state.btPencere === "60" ? " Son 60 mezat penceresinin v1 kısmı %20 tahmini net içerir." : ""}</div>`;
       }
+
+      // 🎛 Tavan Duyarlılık Analizi (bağımsız bölüm — yalnız V2 penceresinde koşar)
+      html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;margin-bottom:4px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.05)">`;
+      html += `<span style="font-size:10px;font-weight:700;color:#94a3b8">🎛 Tavan Duyarlılık Analizi <span style="font-size:8px;color:#475569;font-weight:400">(yalnız V2 penceresi)</span></span>`;
+      html += `<button onclick="btDuyarlilikCalistir()" ${state.btDuyarKosuyor ? 'disabled' : ''} style="padding:4px 10px;border-radius:6px;border:1px solid rgba(168,85,247,0.3);background:${state.btDuyarKosuyor ? 'rgba(255,255,255,0.04)' : 'rgba(168,85,247,0.12)'};color:${state.btDuyarKosuyor ? '#475569' : '#c4b5fd'};font-size:9px;cursor:${state.btDuyarKosuyor ? 'wait' : 'pointer'};font-weight:600">${state.btDuyarKosuyor ? 'Hesaplanıyor…' : 'Duyarlılığı Çalıştır'}</button>`;
+      html += `</div>`;
+      var duyC = btCacheOku("v2|duyarlilik");
+      if (!duyC) {
+        html += `<div style="font-size:9px;color:#64748b;margin-bottom:4px">Henüz koşulmadı — k ∈ {1.0, 1.5, 2.0, 2.5, 3.0} + tavansız (6 koşum, ~4 sn).</div>`;
+      } else {
+        html += `<div style="font-size:7px;color:#475569;margin-bottom:3px">${duyC.guncel ? '✓ güncel' : '⚠ güncel değil — veriler değişti'} · ${new Date(duyC.zaman).toLocaleString("tr-TR")}</div>`;
+        html += `<div style="overflow-x:auto;margin-bottom:4px"><table style="width:100%;border-collapse:collapse;font-size:9px;min-width:320px">`;
+        html += `<thead><tr style="border-bottom:1px solid rgba(255,255,255,0.08)"><th style="padding:3px;text-align:left;color:#64748b;font-size:8px">k</th><th style="padding:3px;text-align:right;color:#64748b;font-size:8px">D uplift %</th><th style="padding:3px;text-align:right;color:#64748b;font-size:8px">D vs A0</th><th style="padding:3px;text-align:right;color:#64748b;font-size:8px">B uplift %</th></tr></thead><tbody>`;
+        duyC.sonuc.satirlar.forEach(function(s) {
+          var kAd = s.k === null ? "Tavansız" : s.k.toFixed(1) + (s.k === 1.0 ? " (referans)" : "");
+          html += `<tr style="border-bottom:1px solid rgba(255,255,255,0.03)">`;
+          html += `<td style="padding:3px;color:#cbd5e1;font-weight:${s.k === null ? '400' : '600'}">${kAd}</td>`;
+          html += `<td style="padding:3px;text-align:right;color:${s.Dpct >= 0 ? '#34d399' : '#f87171'};font-weight:600">${s.Dpct >= 0 ? '+' : ''}%${s.Dpct.toFixed(1)}</td>`;
+          html += `<td style="padding:3px;text-align:right;color:${s.DvsA0tl >= 0 ? '#34d399' : '#f87171'}">${s.DvsA0tl >= 0 ? '+' : ''}${fmt(s.DvsA0tl)} (${s.DvsA0pct >= 0 ? '+' : ''}%${s.DvsA0pct.toFixed(1)})</td>`;
+          html += `<td style="padding:3px;text-align:right;color:#94a3b8">${s.Bpct >= 0 ? '+' : ''}%${s.Bpct.toFixed(1)}</td>`;
+          html += `</tr>`;
+        });
+        html += `</tbody></table></div>`;
+        var dArr = duyC.sonuc.satirlar.map(function(s) { return s.Dpct });
+        html += `<div style="font-size:8px;color:#64748b">D uplift aralığı: ${Math.min.apply(null, dArr) >= 0 ? '+' : ''}%${Math.min.apply(null, dArr).toFixed(1)} – +%${Math.max.apply(null, dArr).toFixed(1)}</div>`;
+      }
       html += `</div>`;
     }
     html += `</div>`;
@@ -1600,7 +1626,7 @@ function render() {
 
     // Çiçek listesi — filtrelenmiş
     const son3Ay = [buAy, buAy > 1 ? buAy - 1 : 12, buAy > 2 ? buAy - 2 : buAy === 2 ? 12 : 11];
-    let caList = Object.entries(sd.cicekMevsim).map(([c, aylar]) => ({ cicek: c, aylar, totalD: Object.values(aylar).reduce((s, a) => s + a.totalD, 0) })).filter(item => !item.cicek.toLowerCase().includes("saksı") && !item.cicek.toLowerCase().includes("saksi")).sort((a, b) => b.totalD - a.totalD);
+    let caList = Object.entries(sd.cicekMevsim).map(([c, aylar]) => ({ cicek: c, aylar, totalD: Object.values(aylar).reduce((s, a) => s + a.totalD, 0) })).sort((a, b) => b.totalD - a.totalD);
     if (state.caSearch && state.caSearch.trim()) {
       const q = state.caSearch.trim().toUpperCase();
       caList = caList.filter(item => item.cicek.toUpperCase().includes(q));

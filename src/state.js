@@ -42,7 +42,8 @@ window.state = {
   mezatLegend: null, // Mezat grafiği çizgi aç/kapa durumu (ilk kullanımda varsayılan atanır)
   btPencere: "v2",   // Backtest penceresi: "v2" | "60"
   btMod: "tavanli",  // Backtest modu: "tavanli" (varsayılan) | "tavansiz"
-  btKosuyor: false   // Çalıştır sırasında buton kilidi
+  btKosuyor: false,  // Çalıştır sırasında buton kilidi
+  btDuyarKosuyor: false // Duyarlılık analizi buton kilidi
 };
 
 function setState(updates) {
