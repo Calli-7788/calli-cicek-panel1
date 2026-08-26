@@ -2583,12 +2583,42 @@ function render() {
     const rData = getPDFReportData(filtered);
     const rStats = rData.stats;
     html += `<div class="sec-title">Detaylı Rapor Oluştur</div>`;
-    html += `<div style="font-size:12px;color:#94a3b8;margin-bottom:16px;margin-top:-6px">Şube içi çiçek performansı + önceki dönem karşılaştırması dahil</div>`;
+    html += `<div style="font-size:12px;color:#94a3b8;margin-bottom:12px;margin-top:-6px">Şube içi çiçek performansı + önceki dönem karşılaştırması dahil</div>`;
+
+    // ── Rapor tür seçici (Faz 0: yalnız Günlük aktif) ──
+    const raporTurleri = [
+      { id: "gunluk", ad: "📄 Günlük Operasyon", aktif: true },
+      { id: "yonetici", ad: "📊 Yönetici Analiz", aktif: false, faz: "Faz 1" },
+      { id: "trend", ad: "📈 Trend & Piyasa", aktif: false, faz: "Faz 2" },
+      { id: "sevkiyat", ad: "🎯 Sevkiyat & Karar", aktif: false, faz: "Faz 3" },
+      { id: "aylik", ad: "🏛 Aylık Patron", aktif: false, faz: "Faz 4" }
+    ];
+    html += `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">`;
+    raporTurleri.forEach(rt => {
+      if (rt.aktif) {
+        const sec = state.raporTur === rt.id;
+        html += `<button onclick="setState({raporTur:'${rt.id}',raporTurNot:null})" style="padding:8px 12px;border-radius:10px;border:1px solid ${sec ? '#22c55e' : 'rgba(255,255,255,0.1)'};background:${sec ? 'rgba(34,197,94,0.15)' : 'rgba(255,255,255,0.04)'};color:${sec ? '#4ade80' : '#94a3b8'};font-size:11px;cursor:pointer;font-weight:${sec ? '700' : '400'}">${rt.ad}</button>`;
+      } else {
+        html += `<button onclick="setState({raporTurNot:'${rt.ad.replace(/'/g, "")} — ${rt.faz}\\'te gelecek'})" style="padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.05);background:rgba(255,255,255,0.02);color:#475569;font-size:11px;cursor:pointer;position:relative">${rt.ad} <span style="font-size:7px;background:rgba(250,204,21,0.15);color:#fbbf24;padding:1px 5px;border-radius:6px;margin-left:2px">yakında</span></button>`;
+      }
+    });
+    html += `</div>`;
+    if (state.raporTurNot) html += `<div style="font-size:10px;color:#fbbf24;margin-bottom:10px">ℹ ${esc(state.raporTurNot)}</div>`;
+    if (!pdfHazirMi()) html += `<div style="padding:8px 12px;border-radius:8px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.25);color:#fca5a5;font-size:11px;margin-bottom:10px">⚠ PDF kütüphanesi yüklenemedi — rapor üretimi devre dışı. İnternet bağlantısını kontrol edip sayfayı yenile.</div>`;
 
     // Report preview
     html += `<div class="card" style="margin-bottom:14px;background:rgba(255,255,255,0.04)">`;
     html += `<div style="font-size:14px;font-weight:700;color:#f8fafc;margin-bottom:12px">📄 Rapor Önizleme</div>`;
     html += `<div style="font-size:11px;color:#64748b;margin-bottom:10px">${dateLabel}</div>`;
+
+    // ☀ Bugünün Özeti (deterministik — önizlemenin EN ÜSTÜNDE)
+    const ozetC = getOzetCumleleri(filtered);
+    if (ozetC) {
+      html += `<div style="padding:10px 12px;border-radius:10px;background:rgba(34,197,94,0.07);border:1px solid rgba(34,197,94,0.18);margin-bottom:12px">`;
+      html += `<div style="font-size:11px;font-weight:700;color:#4ade80;margin-bottom:6px">☀ Bugünün Özeti</div>`;
+      ozetC.forEach(c => { html += `<div style="font-size:10.5px;color:#e2e8f0;padding:2px 0;line-height:1.5">• ${esc(c)}</div>`; });
+      html += `</div>`;
+    }
 
     // Summary — Net Gelir + Demet + Dm Başı Net
     html += `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:12px">`;
@@ -2660,8 +2690,9 @@ function render() {
     html += `<div style="font-size:10px;color:#475569;margin-top:4px;font-style:italic">PDF'te tüm şubeler ve çiçekler tam detaylı yer alır</div>`;
     html += `</div>`;
 
-    // Generate PDF button
-    html += `<button onclick="generatePDF()" style="width:100%;padding:14px;border-radius:12px;border:none;cursor:pointer;font-size:14px;font-weight:600;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;margin-bottom:10px">📄 PDF Rapor Oluştur ve Paylaş</button>`;
+    // Generate PDF button (kütüphane yüklenemediyse devre dışı)
+    const pdfOk = pdfHazirMi();
+    html += `<button onclick="generatePDF()" ${pdfOk ? '' : 'disabled'} style="width:100%;padding:14px;border-radius:12px;border:none;cursor:${pdfOk ? 'pointer' : 'not-allowed'};font-size:14px;font-weight:600;background:${pdfOk ? 'linear-gradient(135deg,#22c55e,#16a34a)' : 'rgba(255,255,255,0.06)'};color:${pdfOk ? '#fff' : '#475569'};margin-bottom:10px">📄 PDF Rapor Oluştur ve Paylaş</button>`;
 
     // Copy text version
     html += `<button onclick="copyReportText()" style="width:100%;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.1);cursor:pointer;font-size:13px;font-weight:500;background:rgba(255,255,255,0.04);color:#94a3b8">📋 Metin Olarak Kopyala (WhatsApp için)</button>`;

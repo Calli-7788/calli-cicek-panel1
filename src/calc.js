@@ -409,3 +409,59 @@ function getMezatSerisi(cicek, sube, sonN) {
 
   return { seri, sma, ewma, slope, slopeYon, slopeKisa, roc3, roc3Uyari, cv, cvKisa, fan, n };
 }
+
+// ═══════════════ BUGÜNÜN ÖZETİ (Rapor Faz 0 — deterministik, AI yok) ═══════════════
+// Kombo (çiçek×şube) Δnet katkıları: seçili dönem vs mezat-eşitlemeli önceki dönem.
+// |katkı| < toplam |Δnet|'in %5'i → gürültü, cümleye girmez. 2-4 cümle; kıyas verisi yoksa null.
+function getOzetCumleleri(filtered) {
+  if (!filtered || filtered.length === 0) return null;
+  const gunler = [...new Set(filtered.map(r => r.t))].sort();
+  const N = gunler.length;
+  const prevDates = [...new Set(ALL_DATA.filter(r => r.t < gunler[0]).map(r => r.t))].sort().reverse().slice(0, Math.max(N, 1));
+  const prevRows = ALL_DATA.filter(r =>
+    prevDates.includes(r.t) &&
+    (!state.sf || (state.sf.startsWith("GRUP:") ? r.c.startsWith(state.sf.replace("GRUP:", "")) : r.c === state.sf)) &&
+    (!state.sb || r.s === state.sb)
+  );
+  if (prevRows.length === 0) return null;
+
+  const ekle = (map, r) => {
+    const k = r.c + " → " + r.s;
+    if (!map[k]) map[k] = { net: 0, d: 0 };
+    map[k].net += r.net; map[k].d += r.d;
+  };
+  const simdi = {}, once = {};
+  filtered.forEach(r => ekle(simdi, r));
+  prevRows.forEach(r => ekle(once, r));
+
+  let nowNet = 0, nowD = 0, prevNet = 0, prevD = 0;
+  filtered.forEach(r => { nowNet += r.net; nowD += r.d });
+  prevRows.forEach(r => { prevNet += r.net; prevD += r.d });
+  const nowDbn = nowD > 0 ? nowNet / nowD : 0;
+  const prevDbn = prevD > 0 ? prevNet / prevD : 0;
+
+  const tumK = [...new Set(Object.keys(simdi).concat(Object.keys(once)))];
+  const deltalar = tumK.map(k => ({ k, delta: (simdi[k] ? simdi[k].net : 0) - (once[k] ? once[k].net : 0) }));
+  const toplamAbs = deltalar.reduce((s, x) => s + Math.abs(x.delta), 0);
+  const esik = toplamAbs * 0.05;
+  const anlamli = deltalar.filter(x => Math.abs(x.delta) >= esik && Math.abs(x.delta) > 0);
+  const neg = anlamli.filter(x => x.delta < 0).sort((a, b) => a.delta - b.delta).slice(0, 2);
+  const poz = anlamli.filter(x => x.delta > 0).sort((a, b) => b.delta - a.delta).slice(0, 2);
+
+  const c = [];
+  if (prevDbn > 0) {
+    const ch = (nowDbn - prevDbn) / prevDbn * 100;
+    c.push("Dm başı net önceki " + prevDates.length + " mezata göre %" + Math.abs(ch).toFixed(1) + (ch >= 0 ? " arttı" : " azaldı") + " (" + fmt2(prevDbn) + " → " + fmt2(nowDbn) + ").");
+  }
+  if (neg.length) c.push("En büyük düşüş katkısı: " + neg.map(x => x.k + " (" + fmt(x.delta) + ")").join(" ve ") + ".");
+  if (poz.length) c.push("Pozitif ayrışan: " + poz.map(x => x.k + " (+" + fmt(x.delta) + ")").join(" ve ") + ".");
+  const zarar = getZararFiltered();
+  const v2o = getV2Ozet(filtered);
+  if (zarar.length > 0) {
+    c.push("⚠ Dönemde " + zarar.length + " zarar kaydı (−" + fmt(Math.abs(zarar.reduce((s, r) => s + r.net, 0))) + ") — tediye hesabına dahil, analize değil.");
+  } else if (v2o.kesintiPct !== null && v2o.kesintiPct > 30) {
+    c.push("⚠ Gerçek kesinti oranı %" + v2o.kesintiPct.toFixed(1) + " — küçük sevkiyat payını kontrol et.");
+  }
+  if (c.length < 2) return null;
+  return c.slice(0, 4);
+}
