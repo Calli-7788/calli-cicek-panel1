@@ -167,7 +167,12 @@ function calcStats(filtered) {
 function getAlerts(filtered) {
   const today = state.ed;
   const result = [];
-  const todayRecs = ALL_DATA.filter(r => r.t === today);
+  // KURAL: banner'lar da ekran filtresine uyar (çiçek/grup + şube)
+  const todayRecs = ALL_DATA.filter(r =>
+    r.t === today &&
+    (!state.sf || (state.sf.startsWith("GRUP:") ? r.c.startsWith(state.sf.replace("GRUP:", "")) : r.c === state.sf)) &&
+    (!state.sb || r.s === state.sb)
+  );
   if (todayRecs.length) {
     // Çiçek×şube bazında grupla
     const kombo = {};
@@ -417,12 +422,12 @@ function getOzetCumleleri(filtered) {
   if (!filtered || filtered.length === 0) return null;
   const gunler = [...new Set(filtered.map(r => r.t))].sort();
   const N = gunler.length;
-  const prevDates = [...new Set(ALL_DATA.filter(r => r.t < gunler[0]).map(r => r.t))].sort().reverse().slice(0, Math.max(N, 1));
-  const prevRows = ALL_DATA.filter(r =>
-    prevDates.includes(r.t) &&
+  // KURAL: tarih havuzu da ekran filtresiyle seçilir — filtreli evrenin mezat günleri kıyaslanır
+  const ozFiltre = r =>
     (!state.sf || (state.sf.startsWith("GRUP:") ? r.c.startsWith(state.sf.replace("GRUP:", "")) : r.c === state.sf)) &&
-    (!state.sb || r.s === state.sb)
-  );
+    (!state.sb || r.s === state.sb);
+  const prevDates = [...new Set(ALL_DATA.filter(r => r.t < gunler[0] && ozFiltre(r)).map(r => r.t))].sort().reverse().slice(0, Math.max(N, 1));
+  const prevRows = ALL_DATA.filter(r => prevDates.includes(r.t) && ozFiltre(r));
   if (prevRows.length === 0) return null;
 
   const ekle = (map, r) => {

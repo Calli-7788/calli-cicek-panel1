@@ -286,12 +286,16 @@ function render() {
     }
 
     // Önceki mezat dönemi hesapla (değişim yüzdeleri için)
+    // KURAL: ekrandaki filtre (çiçek/grup + şube) kıyasa da AYNEN uygulanır — tarih havuzu dahil
     const prevMezatData = (function(){
-      const dates = [...new Set(ALL_DATA.filter(r => r.t < state.sd).map(r => r.t))].sort().reverse();
+      const filtre = r =>
+        (!state.sf || (state.sf.startsWith("GRUP:") ? r.c.startsWith(state.sf.replace("GRUP:", "")) : r.c === state.sf)) &&
+        (!state.sb || r.s === state.sb);
+      const dates = [...new Set(ALL_DATA.filter(r => r.t < state.sd && filtre(r)).map(r => r.t))].sort().reverse();
       const gunSayisi = [...new Set(filtered.map(r => r.t))].length;
       const prevDates = dates.slice(0, Math.max(gunSayisi, 1));
       if (prevDates.length === 0) return null;
-      const pd = ALL_DATA.filter(r => prevDates.includes(r.t));
+      const pd = ALL_DATA.filter(r => prevDates.includes(r.t) && filtre(r));
       const pNet = pd.reduce((s,r) => s+r.net, 0);
       const pD = pd.reduce((s,r) => s+r.d, 0);
       return { net: pNet, d: pD, dbn: pD > 0 ? pNet / pD : 0, ciro: pd.reduce((s,r) => s+r.ciro, 0) };
@@ -874,11 +878,15 @@ function render() {
     })).sort((a, b) => b.net - a.net);
 
     // Önceki dönem hesapla (delta için)
+    // KURAL: ekran filtresi (çiçek/grup + şube) kıyasa da uygulanır — tarih havuzu dahil
+    const subeFiltre = r =>
+      (!state.sf || (state.sf.startsWith("GRUP:") ? r.c.startsWith(state.sf.replace("GRUP:", "")) : r.c === state.sf)) &&
+      (!state.sb || r.s === state.sb);
     const prevBrPerf = {};
     const filteredDates = [...new Set(filtered.map(r => r.t))].sort();
     const gunSayisiSube = filteredDates.length;
-    const prevDatesAll = [...new Set(ALL_DATA.filter(r => r.t < (filteredDates[0]||state.sd)).map(r => r.t))].sort().reverse().slice(0, Math.max(gunSayisiSube, 1));
-    ALL_DATA.filter(r => prevDatesAll.includes(r.t)).forEach(r => {
+    const prevDatesAll = [...new Set(ALL_DATA.filter(r => r.t < (filteredDates[0]||state.sd) && subeFiltre(r)).map(r => r.t))].sort().reverse().slice(0, Math.max(gunSayisiSube, 1));
+    ALL_DATA.filter(r => prevDatesAll.includes(r.t) && subeFiltre(r)).forEach(r => {
       if (!prevBrPerf[r.s]) prevBrPerf[r.s] = { net: 0, d: 0 };
       prevBrPerf[r.s].net += r.net; prevBrPerf[r.s].d += r.d;
     });
@@ -2615,7 +2623,7 @@ function render() {
     const ozetC = getOzetCumleleri(filtered);
     if (ozetC) {
       html += `<div style="padding:10px 12px;border-radius:10px;background:rgba(34,197,94,0.07);border:1px solid rgba(34,197,94,0.18);margin-bottom:12px">`;
-      html += `<div style="font-size:11px;font-weight:700;color:#4ade80;margin-bottom:6px">☀ Bugünün Özeti</div>`;
+      html += `<div style="font-size:11px;font-weight:700;color:#4ade80;margin-bottom:6px">☀ Bugünün Özeti${(state.sf || state.sb) ? ' <span style="font-size:9px;color:#fbbf24;font-weight:400">· filtreli</span>' : ''}</div>`;
       ozetC.forEach(c => { html += `<div style="font-size:10.5px;color:#e2e8f0;padding:2px 0;line-height:1.5">• ${esc(c)}</div>`; });
       html += `</div>`;
     }

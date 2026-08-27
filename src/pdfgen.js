@@ -115,13 +115,39 @@ function svgToPng(svgElement, scale) {
 }
 
 // ── Program içi önizleme katmanı: ✕ KAPAT · 📤 PAYLAŞ · 💾 İNDİR ──
+// iOS Safari iframe içindeki PDF'in YALNIZ İLK SAYFASINI gösterir (platform kısıtı).
+// Bu yüzden önizleme pdf.js ile sayfa sayfa canvas'a çizilir (tembel CDN yüklemesi);
+// pdf.js yüklenemezse iframe fallback (masaüstünde tüm sayfalar zaten görünür).
 var _pdfAktifBlobUrl = null;
+var _pdfjsSoz = null;
+
+function pdfjsYukle() {
+  if (window.pdfjsLib) return Promise.resolve(true);
+  if (_pdfjsSoz) return _pdfjsSoz;
+  _pdfjsSoz = new Promise(function(resolve) {
+    var s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    s.onload = function() {
+      try {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+        resolve(true);
+      } catch (e) { resolve(false); }
+    };
+    s.onerror = function() { _pdfjsSoz = null; resolve(false); };
+    document.head.appendChild(s);
+  });
+  return _pdfjsSoz;
+}
 
 function pdfOnizlemeKapat() {
   var ov = document.getElementById("pdfOnizleme");
   if (ov) ov.remove();
   if (_pdfAktifBlobUrl) { URL.revokeObjectURL(_pdfAktifBlobUrl); _pdfAktifBlobUrl = null; }
   window._pdfAktifBlob = null;
+}
+
+function _pdfIframeFallback(kap) {
+  kap.innerHTML = '<iframe src="' + _pdfAktifBlobUrl + '" style="width:100%;height:100%;border:none;background:#374151" title="PDF önizleme"></iframe>';
 }
 
 function pdfOnizlemeAc(doc, dosyaAdi) {
@@ -131,7 +157,6 @@ function pdfOnizlemeAc(doc, dosyaAdi) {
   window._pdfAktifAd = dosyaAdi;
   _pdfAktifBlobUrl = URL.createObjectURL(blob);
 
-  pdfOnizlemeKapat._eski = null;
   var eski = document.getElementById("pdfOnizleme");
   if (eski) eski.remove();
 
@@ -141,12 +166,45 @@ function pdfOnizlemeAc(doc, dosyaAdi) {
   ov.innerHTML =
     '<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:#111827;border-bottom:1px solid rgba(255,255,255,0.08)">' +
     '<button onclick="pdfOnizlemeKapat()" style="padding:8px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(239,68,68,0.15);color:#fca5a5;font-size:13px;cursor:pointer;font-weight:700">✕ Kapat</button>' +
-    '<span style="flex:1;font-size:11px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + dosyaAdi + '</span>' +
+    '<span style="flex:1;font-size:11px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + dosyaAdi + ' <span id="pdfSayfaSayisi" style="color:#4ade80"></span></span>' +
     '<button onclick="pdfPaylas(window._pdfAktifBlob, window._pdfAktifAd)" style="padding:8px 14px;border-radius:8px;border:none;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;font-size:13px;cursor:pointer;font-weight:700">📤 Paylaş</button>' +
     '<button onclick="pdfIndir(window._pdfAktifBlob, window._pdfAktifAd)" style="padding:8px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:#e2e8f0;font-size:13px;cursor:pointer">💾 İndir</button>' +
     '</div>' +
-    '<iframe src="' + _pdfAktifBlobUrl + '" style="flex:1;border:none;background:#374151" title="PDF önizleme"></iframe>';
+    '<div id="pdfSayfalar" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:8px;background:#1f2937"><div style="text-align:center;color:#94a3b8;font-size:12px;padding:30px">Önizleme hazırlanıyor…</div></div>';
   document.body.appendChild(ov);
+
+  pdfjsYukle().then(function(ok) {
+    var kap = document.getElementById("pdfSayfalar");
+    if (!kap) return;   // katman bu arada kapatılmış
+    if (!ok || !window.pdfjsLib) { _pdfIframeFallback(kap); return; }
+    blob.arrayBuffer().then(function(ab) {
+      return window.pdfjsLib.getDocument({ data: ab }).promise;
+    }).then(function(pdf) {
+      var kap2 = document.getElementById("pdfSayfalar");
+      if (!kap2) return;
+      kap2.innerHTML = "";
+      var say = document.getElementById("pdfSayfaSayisi");
+      if (say) say.textContent = "· " + pdf.numPages + " sayfa";
+      var genislik = Math.min((kap2.clientWidth || 360) - 16, 820);
+      var rasterOran = Math.min(2, (window.devicePixelRatio || 1) * 1.5);
+      var ciz = function(n) {
+        if (n > pdf.numPages || !document.getElementById("pdfSayfalar")) return;
+        pdf.getPage(n).then(function(page) {
+          var vp1 = page.getViewport({ scale: 1 });
+          var vp = page.getViewport({ scale: (genislik / vp1.width) * rasterOran });
+          var c = document.createElement("canvas");
+          c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+          c.style.cssText = "width:" + genislik + "px;height:auto;display:block;margin:0 auto 10px;box-shadow:0 2px 12px rgba(0,0,0,0.5);background:#fff;border-radius:3px";
+          kap2.appendChild(c);
+          page.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise.then(function() { ciz(n + 1); });
+        });
+      };
+      ciz(1);
+    }).catch(function() {
+      var kap3 = document.getElementById("pdfSayfalar");
+      if (kap3) _pdfIframeFallback(kap3);
+    });
+  });
 }
 
 function pdfIndir(blob, dosyaAdi) {

@@ -165,7 +165,7 @@ function generatePDF() {
     doc.roundedRect(40, y, W - 80, kutuH, 5, 5, "F");
     doc.setFont("DejaVu", "bold"); doc.setFontSize(10);
     doc.setTextColor(PDF_TEMA.yesil[0], PDF_TEMA.yesil[1], PDF_TEMA.yesil[2]);
-    doc.text(pdfMetin("☀ Bugünün Özeti"), 50, y + 15);
+    doc.text(pdfMetin("☀ Bugünün Özeti" + ((state.sf || state.sb) ? " · filtreli" : "")), 50, y + 15);
     doc.setFont("DejaVu", "normal"); doc.setFontSize(8.5);
     doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
     satirlar.forEach((l, i) => doc.text(l, 50, y + 28 + i * 11));
