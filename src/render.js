@@ -2596,7 +2596,7 @@ function render() {
     // ── Rapor tür seçici (Faz 0: yalnız Günlük aktif) ──
     const raporTurleri = [
       { id: "gunluk", ad: "📄 Günlük Operasyon", aktif: true },
-      { id: "yonetici", ad: "📊 Yönetici Analiz", aktif: false, faz: "Faz 1" },
+      { id: "yonetici", ad: "📊 Yönetici Analiz", aktif: true },
       { id: "trend", ad: "📈 Trend & Piyasa", aktif: false, faz: "Faz 2" },
       { id: "sevkiyat", ad: "🎯 Sevkiyat & Karar", aktif: false, faz: "Faz 3" },
       { id: "aylik", ad: "🏛 Aylık Patron", aktif: false, faz: "Faz 4" }
@@ -2613,6 +2613,86 @@ function render() {
     html += `</div>`;
     if (state.raporTurNot) html += `<div style="font-size:10px;color:#fbbf24;margin-bottom:10px">ℹ ${esc(state.raporTurNot)}</div>`;
     if (!pdfHazirMi()) html += `<div style="padding:8px 12px;border-radius:8px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.25);color:#fca5a5;font-size:11px;margin-bottom:10px">⚠ PDF kütüphanesi yüklenemedi — rapor üretimi devre dışı. İnternet bağlantısını kontrol edip sayfayı yenile.</div>`;
+
+    if (state.raporTur === "yonetici") {
+      // ══ 📊 YÖNETİCİ ANALİZ önizlemesi (kompakt) ══
+      const yp = getYoneticiPencere(state.yonMezatN);
+      const filtreEtiket = state.sf ? state.sf.replace("GRUP:", "") + (state.sf.startsWith("GRUP:") ? " (Grup)" : "") : (state.sb ? state.sb : null);
+      html += `<div class="card" style="margin-bottom:14px;background:rgba(255,255,255,0.04)">`;
+      html += `<div style="font-size:14px;font-weight:700;color:#f8fafc;margin-bottom:4px">📊 Yönetici Analiz Önizleme</div>`;
+      html += `<div style="font-size:10px;color:#64748b;margin-bottom:8px">Son ${yp.gun1.length} mezat: ${yp.gun1.length ? fD(yp.gun1[0]) + " – " + fD(yp.gun1[yp.gun1.length - 1]) : "—"}${filtreEtiket ? ' · <span style="color:#fbbf24">Filtre: ' + esc(filtreEtiket) + '</span>' : ''} · üst tarih filtresinden bağımsız</div>`;
+      html += `<div style="display:flex;gap:5px;margin-bottom:10px">`;
+      [5, 10, 20].forEach(n => {
+        const akt = state.yonMezatN === n;
+        html += `<button onclick="setState({yonMezatN:${n}})" style="padding:4px 12px;border-radius:6px;border:1px solid ${akt ? '#7c3aed' : 'rgba(255,255,255,0.08)'};background:${akt ? 'rgba(124,58,237,0.2)' : 'transparent'};color:${akt ? '#c4b5fd' : '#94a3b8'};font-size:10px;cursor:pointer;font-weight:${akt ? '700' : '400'}">${n} mezat</button>`;
+      });
+      html += `</div>`;
+
+      if (yp.gun1.length === 0) {
+        html += `<div style="font-size:12px;color:#fbbf24;text-align:center;padding:16px">Bu filtreyle mezat verisi yok.</div>`;
+      } else {
+        const g1 = yp.d1.reduce((s, r) => s + r.net, 0), q1 = yp.d1.reduce((s, r) => s + r.d, 0);
+        const g0 = yp.d0.reduce((s, r) => s + r.net, 0), q0 = yp.d0.reduce((s, r) => s + r.d, 0);
+        const roz = (n1, n0) => n0 > 0 ? `<span style="font-size:8px;color:${n1 >= n0 ? '#34d399' : '#f87171'}">${n1 >= n0 ? '▲' : '▼'} ${Math.abs((n1 - n0) / n0 * 100).toFixed(0)}%</span>` : '';
+        const med1 = getMedyanGunlukDbn(yp.d1), med0 = getMedyanGunlukDbn(yp.d0);
+        const as1 = new Set(yp.d1.map(r => r.s)).size, as0 = new Set(yp.d0.map(r => r.s)).size;
+        const au1 = new Set(yp.d1.map(r => r.c)).size, au0 = new Set(yp.d0.map(r => r.c)).size;
+        const kpiler = [
+          ["Net Gelir", fmt(g1), roz(g1, g0)],
+          ["Demet", String(q1), roz(q1, q0)],
+          ["Ort dbn", q1 > 0 ? fmt2(g1 / q1) : "—", q0 > 0 && q1 > 0 ? roz(g1 / q1, g0 / q0) : ""],
+          ["Medyan dbn", med1 !== null ? fmt2(med1) : "—", med0 !== null && med1 !== null ? roz(med1, med0) : ""],
+          ["Aktif Şube", String(as1), roz(as1, as0)],
+          ["Aktif Ürün", String(au1), roz(au1, au0)]
+        ];
+        html += `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px">`;
+        kpiler.forEach(k => {
+          html += `<div style="padding:7px;border-radius:8px;background:rgba(255,255,255,0.03);text-align:center"><div style="font-size:7px;color:#64748b;text-transform:uppercase">${k[0]}</div><div style="font-size:12px;font-weight:800;color:#e2e8f0">${k[1]}</div>${k[2] ? '<div>' + k[2] + '</div>' : ''}</div>`;
+        });
+        html += `</div>`;
+
+        // Ayrıştırma özet cümlesi
+        if (yp.gun1.length >= 3 && yp.gun0.length >= 3) {
+          const dg = decomposeGelir(yp.d1, yp.d0);
+          const isr = v => (v >= 0 ? "+" : "−") + fmt(Math.abs(v));
+          html += `<div style="padding:8px 10px;border-radius:8px;background:rgba(168,85,247,0.07);border:1px solid rgba(168,85,247,0.15);font-size:10.5px;color:#e2e8f0;margin-bottom:8px">Gelir ${isr(dg.delta)}: ${isr(dg.hacim)} hacim, ${isr(dg.fiyat)} fiyat, ${isr(dg.mix)} karma, ${isr(dg.yeniCikan)} yeni/çıkan ürün</div>`;
+        } else {
+          html += `<div style="font-size:10px;color:#64748b;margin-bottom:8px">Gelir ayrıştırması: yetersiz dönem verisi (iki pencerede ≥3 mezat günü gerekli)</div>`;
+        }
+
+        // Fırsat çift değeri
+        if (yp.oncesi) {
+          const fir = getBrutFiyatFirsati(yp.d1, yp.oncesi);
+          html += `<div style="display:flex;gap:6px;margin-bottom:8px">`;
+          html += `<div style="flex:1;padding:7px 9px;border-radius:8px;background:rgba(255,255,255,0.03)"><div style="font-size:7px;color:#64748b">FIRSAT — TEORİK (üst sınır)</div><div style="font-size:12px;font-weight:800;color:#94a3b8">${fmt(fir.teorik)}</div></div>`;
+          html += `<div style="flex:1;padding:7px 9px;border-radius:8px;background:rgba(34,197,94,0.06);border:1px solid rgba(34,197,94,0.15)"><div style="font-size:7px;color:#64748b">FIRSAT — KAPASİTE AYARLI</div><div style="font-size:12px;font-weight:800;color:#4ade80">${fmt(fir.ayarli)}</div></div>`;
+          html += `</div>`;
+        }
+
+        // İlk 5 Top kombo (n≥3)
+        const yRS = getRS(yp.d1);
+        const komboM = {};
+        yp.d1.forEach(r => {
+          const k = r.c + "|" + r.s;
+          if (!komboM[k]) komboM[k] = { c: r.c, s: r.s, net: 0, d: 0, gunler: new Set() };
+          komboM[k].net += r.net; komboM[k].d += r.d; komboM[k].gunler.add(r.t);
+        });
+        const topK = Object.values(komboM).map(k => ({ ...k, n: k.gunler.size, dbn: k.d > 0 ? k.net / k.d : 0 }))
+          .filter(k => k.n >= 3).sort((a, b) => b.dbn - a.dbn).slice(0, 5);
+        if (topK.length) {
+          html += `<div style="font-size:10px;font-weight:700;color:#94a3b8;margin-bottom:4px">Top 5 Kombo (dbn)</div>`;
+          topK.forEach(k => {
+            const rsV = yRS.kombo[k.c + "|" + k.s];
+            const rsRenk = !rsV ? "#475569" : rsV.rs > 1.05 ? "#34d399" : rsV.rs < 0.95 ? "#f87171" : "#94a3b8";
+            html += `<div style="display:flex;justify-content:space-between;font-size:10px;padding:3px 0;border-top:1px solid rgba(255,255,255,0.03)"><span style="color:#cbd5e1">${esc(k.c)} → ${esc(k.s)} <span style="color:#475569">(n=${k.n})</span></span><span><span style="color:#34d399;font-weight:600">${fmt(k.dbn)}/dm</span> <span style="color:${rsRenk};font-size:9px">${rsV ? "RS " + rsV.rs.toFixed(2).replace(".", ",") + " (n=" + rsV.n + ")" : "RS —"}</span></span></div>`;
+          });
+        }
+        html += `<div style="font-size:9px;color:#475569;margin-top:8px">PDF'te tüm bölümler tam detaylı: ayrıştırma tablosu, ürün×şube heatmap, şube VI/RS tablosu, fırsat detayı, Top/Bottom-10.</div>`;
+      }
+      html += `</div>`;
+      const yPdfOk = pdfHazirMi() && yp.gun1.length > 0;
+      html += `<button onclick="generateYoneticiPDF()" ${yPdfOk ? '' : 'disabled'} style="width:100%;padding:14px;border-radius:12px;border:none;cursor:${yPdfOk ? 'pointer' : 'not-allowed'};font-size:14px;font-weight:600;background:${yPdfOk ? 'linear-gradient(135deg,#7c3aed,#6d28d9)' : 'rgba(255,255,255,0.06)'};color:${yPdfOk ? '#fff' : '#475569'};margin-bottom:10px">📊 Yönetici Analiz PDF Oluştur</button>`;
+    } else {
 
     // Report preview
     html += `<div class="card" style="margin-bottom:14px;background:rgba(255,255,255,0.04)">`;
@@ -2704,6 +2784,7 @@ function render() {
 
     // Copy text version
     html += `<button onclick="copyReportText()" style="width:100%;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.1);cursor:pointer;font-size:13px;font-weight:500;background:rgba(255,255,255,0.04);color:#94a3b8">📋 Metin Olarak Kopyala (WhatsApp için)</button>`;
+    }
   }
 
   // ══ AI ══

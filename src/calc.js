@@ -470,3 +470,194 @@ function getOzetCumleleri(filtered) {
   if (c.length < 2) return null;
   return c.slice(0, 4);
 }
+
+// ═══════════════ YÖNETİCİ ANALİZ RAPORU HESAPLARI (Rapor Faz 1) ═══════════════
+
+// Rapor penceresi: üst tarih filtresinden BAĞIMSIZ, seçili çiçek/şube filtresi UYGULANIR.
+// Son N mezat günü (d1) + önceki eşdeğer N mezat günü (d0), filtreli evrenin günlerinden.
+function getYoneticiPencere(N) {
+  const filtre = r =>
+    (!state.sf || (state.sf.startsWith("GRUP:") ? r.c.startsWith(state.sf.replace("GRUP:", "")) : r.c === state.sf)) &&
+    (!state.sb || r.s === state.sb);
+  const rows = ALL_DATA.filter(filtre);
+  const gunler = [...new Set(rows.map(r => r.t))].sort();
+  const gun1 = gunler.slice(-N);
+  const gun0 = gunler.slice(-2 * N, -N);
+  const s1 = new Set(gun1), s0 = new Set(gun0);
+  return {
+    d1: rows.filter(r => s1.has(r.t)), d0: rows.filter(r => s0.has(r.t)),
+    gun1, gun0,
+    oncesi: gun0.length ? gun0[0] : (gun1.length ? gun1[0] : null)  // dönem-öncesi sınırı (absorpsiyon için)
+  };
+}
+
+// Gelir ayrıştırması: ΔGelir = Hacim + Fiyat + Mix + YeniÇıkan
+// Yönetimsel attribution metriğidir; nedensel analiz değildir. Sonuç baz dönem seçimine duyarlıdır.
+function decomposeGelir(d1Rows, d0Rows) {
+  const grup = rows => {
+    const m = {};
+    rows.forEach(r => { if (!m[r.c]) m[r.c] = { q: 0, g: 0 }; m[r.c].q += r.d; m[r.c].g += r.net; });
+    return m;
+  };
+  const u1 = grup(d1Rows), u0 = grup(d0Rows);
+  const G1 = d1Rows.reduce((s, r) => s + r.net, 0), G0 = d0Rows.reduce((s, r) => s + r.net, 0);
+  const Q1 = d1Rows.reduce((s, r) => s + r.d, 0), Q0 = d0Rows.reduce((s, r) => s + r.d, 0);
+  const P0ort = Q0 > 0 ? G0 / Q0 : 0;
+  const delta = G1 - G0;
+  const hacim = (Q1 - Q0) * P0ort;
+
+  let fiyat = 0, yeniCikan = 0;
+  Object.keys(u1).forEach(c => {
+    if (u0[c]) {
+      const p1 = u1[c].q > 0 ? u1[c].g / u1[c].q : 0;
+      const p0 = u0[c].q > 0 ? u0[c].g / u0[c].q : 0;
+      fiyat += u1[c].q * (p1 - p0);
+    } else {
+      yeniCikan += u1[c].g;          // yeni ürün geliri (+)
+    }
+  });
+  Object.keys(u0).forEach(c => { if (!u1[c]) yeniCikan -= u0[c].g; });  // çıkan ürün (−)
+  const mix = delta - hacim - fiyat - yeniCikan;
+  return {
+    delta, hacim, fiyat, mix, yeniCikan, gelir1: G1, gelir0: G0,
+    saglamaOK: Math.abs((hacim + fiyat + mix + yeniCikan) - delta) < 0.05
+  };
+}
+
+// Relative Strength — kombo bazlı; gün şartı: o gün o üründe >=2 şube. Min 3 geçerli gün → yoksa null.
+// Şube düzeyi RS de aynı gün-ürün gözlemlerinden demet ağırlıklı türetilir.
+function getRS(rows) {
+  const gunUrun = {};
+  rows.forEach(r => {
+    const k = r.t + "|" + r.c;
+    if (!gunUrun[k]) gunUrun[k] = {};
+    if (!gunUrun[k][r.s]) gunUrun[k][r.s] = { net: 0, d: 0 };
+    gunUrun[k][r.s].net += r.net; gunUrun[k][r.s].d += r.d;
+  });
+  const komboAcc = {}, subeAcc = {};
+  Object.keys(gunUrun).forEach(k => {
+    const subeler = gunUrun[k];
+    const adlar = Object.keys(subeler);
+    if (adlar.length < 2) return;                       // tek şubeli gün atlanır
+    let gNet = 0, gD = 0;
+    adlar.forEach(s => { gNet += subeler[s].net; gD += subeler[s].d; });
+    const genelDbn = gD > 0 ? gNet / gD : 0;
+    if (genelDbn <= 0) return;
+    const c = k.split("|")[1];
+    adlar.forEach(s => {
+      const v = subeler[s];
+      const rsG = (v.d > 0 ? v.net / v.d : 0) / genelDbn;
+      const kk = c + "|" + s;
+      if (!komboAcc[kk]) komboAcc[kk] = { top: 0, d: 0, n: 0 };
+      komboAcc[kk].top += rsG * v.d; komboAcc[kk].d += v.d; komboAcc[kk].n++;
+      if (!subeAcc[s]) subeAcc[s] = { top: 0, d: 0, n: 0 };
+      subeAcc[s].top += rsG * v.d; subeAcc[s].d += v.d; subeAcc[s].n++;
+    });
+  });
+  const donustur = acc => {
+    const out = {};
+    Object.keys(acc).forEach(k => {
+      const v = acc[k];
+      out[k] = v.n >= 3 && v.d > 0 ? { rs: v.top / v.d, n: v.n } : null;
+    });
+    return out;
+  };
+  return { kombo: donustur(komboAcc), sube: donustur(subeAcc) };
+}
+
+// Value Index — şube bazlı GelirPayı% / HacimPayı%.
+// SUNUM METRİĞİ — karar hesaplarına girmez; hiçbir skor fonksiyonuna bağlanmaz.
+function getValueIndex(rows) {
+  const G = rows.reduce((s, r) => s + r.net, 0), Q = rows.reduce((s, r) => s + r.d, 0);
+  const m = {};
+  rows.forEach(r => { if (!m[r.s]) m[r.s] = { g: 0, q: 0 }; m[r.s].g += r.net; m[r.s].q += r.d; });
+  return Object.keys(m).map(s => {
+    const gp = G > 0 ? m[s].g / G * 100 : 0;
+    const hp = Q > 0 ? m[s].q / Q * 100 : 0;
+    return { sube: s, gelirPay: gp, hacimPay: hp, vi: hp > 0 ? gp / hp : null, gelir: m[s].g, demet: m[s].q };
+  }).sort((a, b) => b.gelir - a.gelir);
+}
+
+// Arz düzenliliği: pencere günleri içinde kombonun satış yaptığı gün oranı → "8/10 · %80"
+function getArzDuzenlilik(cicek, sube, gunler) {
+  if (!gunler || gunler.length === 0) return null;
+  const set = new Set(gunler);
+  const satisGun = new Set(ALL_DATA.filter(r => r.c === cicek && r.s === sube && set.has(r.t)).map(r => r.t)).size;
+  return { satis: satisGun, toplam: gunler.length, oran: satisGun / gunler.length * 100 };
+}
+
+// Brüt Fiyat Fırsatı — ÇİFT DEĞER (kilitli karar #1).
+// TEORİK: üst sınır. KAPASİTE AYARLI: en iyi şubenin dönem-öncesi P75 absorpsiyon tavanıyla.
+// İlave hacmin aynı fiyattan emileceği garanti değildir — "kayıp" değil, fiyat farkı göstergesidir.
+function getBrutFiyatFirsati(rows, oncesiTarih) {
+  const gunUrun = {};
+  rows.forEach(r => {
+    const k = r.t + "|" + r.c;
+    if (!gunUrun[k]) gunUrun[k] = {};
+    if (!gunUrun[k][r.s]) gunUrun[k][r.s] = { net: 0, d: 0 };
+    gunUrun[k][r.s].net += r.net; gunUrun[k][r.s].d += r.d;
+  });
+  // Dönem-öncesi P75 absorpsiyon (kombo günlük demetleri, t < oncesiTarih)
+  const p75Cache = {};
+  const p75Al = (c, s) => {
+    const kk = c + "|" + s;
+    if (p75Cache[kk] !== undefined) return p75Cache[kk];
+    const gunluk = {};
+    ALL_DATA.forEach(r => { if (r.c === c && r.s === s && r.t < oncesiTarih) gunluk[r.t] = (gunluk[r.t] || 0) + r.d; });
+    const v = Object.values(gunluk).sort((a, b) => a - b);
+    const p75 = v.length === 0 ? 0 : (v.length >= 4 ? v[Math.floor(v.length * 0.75)] : v[Math.floor((v.length - 1) / 2)]);
+    p75Cache[kk] = p75;
+    return p75;
+  };
+
+  let teorik = 0, ayarli = 0, tavanDevredeSayisi = 0;
+  const komboAgg = {};
+  Object.keys(gunUrun).forEach(k => {
+    const subeler = gunUrun[k];
+    const adlar = Object.keys(subeler);
+    if (adlar.length < 2) return;                        // yalnız >=2 şubeli gün×ürünler
+    const t = k.split("|")[0], c = k.split("|")[1];
+    let enIyi = null;
+    adlar.forEach(s => {
+      const dbn = subeler[s].d > 0 ? subeler[s].net / subeler[s].d : 0;
+      subeler[s].dbn = dbn;
+      if (!enIyi || dbn > subeler[enIyi].dbn) enIyi = s;
+    });
+    const enIyiDbn = subeler[enIyi].dbn;
+    let gunTeorik = 0, gunAyarli = 0;
+    const digerler = adlar.filter(s => s !== enIyi && enIyiDbn > subeler[s].dbn);
+    digerler.forEach(s => { gunTeorik += subeler[s].d * (enIyiDbn - subeler[s].dbn); });
+    // Kapasite ayarlı: taşınabilir = max(0, P75 − en iyi şubede o gün zaten satılan)
+    let tasinabilir = Math.max(0, p75Al(c, enIyi) - subeler[enIyi].d);
+    const ucuzdanSirali = digerler.slice().sort((a, b) => subeler[a].dbn - subeler[b].dbn);
+    let tasinacakToplam = 0;
+    ucuzdanSirali.forEach(s => { tasinacakToplam += subeler[s].d; });
+    if (tasinabilir < tasinacakToplam && digerler.length > 0) tavanDevredeSayisi++;
+    ucuzdanSirali.forEach(s => {
+      if (tasinabilir <= 0) return;
+      const tasi = Math.min(subeler[s].d, tasinabilir);
+      gunAyarli += tasi * (enIyiDbn - subeler[s].dbn);
+      tasinabilir -= tasi;
+    });
+    teorik += gunTeorik;
+    ayarli += gunAyarli;
+    if (gunTeorik > 0) {
+      const ka = c + "|" + enIyi;
+      if (!komboAgg[ka]) komboAgg[ka] = { cicek: c, hedefSube: enIyi, teorik: 0, ayarli: 0, ornekGun: t, ornekTutar: 0 };
+      komboAgg[ka].teorik += gunTeorik;
+      komboAgg[ka].ayarli += gunAyarli;
+      if (gunTeorik > komboAgg[ka].ornekTutar) { komboAgg[ka].ornekGun = t; komboAgg[ka].ornekTutar = gunTeorik; }
+    }
+  });
+  const topKombolar = Object.values(komboAgg).sort((a, b) => b.teorik - a.teorik).slice(0, 3);
+  return { teorik, ayarli, topKombolar, tavanDevredeSayisi };
+}
+
+// Medyan dbn: dönemdeki MEZAT GÜNÜ dbn'lerinin medyanı (satır bazlı değil)
+function getMedyanGunlukDbn(rows) {
+  const g = {};
+  rows.forEach(r => { if (!g[r.t]) g[r.t] = { net: 0, d: 0 }; g[r.t].net += r.net; g[r.t].d += r.d; });
+  const dbns = Object.values(g).filter(v => v.d > 0).map(v => v.net / v.d).sort((a, b) => a - b);
+  if (dbns.length === 0) return null;
+  return dbns.length % 2 ? dbns[(dbns.length - 1) / 2] : (dbns[dbns.length / 2 - 1] + dbns[dbns.length / 2]) / 2;
+}

@@ -44,8 +44,9 @@ window.state = {
   btMod: "tavanli",  // Backtest modu: "tavanli" (varsayılan) | "tavansiz"
   btKosuyor: false,  // Çalıştır sırasında buton kilidi
   btDuyarKosuyor: false, // Duyarlılık analizi buton kilidi
-  raporTur: "gunluk",  // Rapor tür seçici (Faz 0: yalnız gunluk aktif)
-  raporTurNot: null    // Gri karta tıklanınca gösterilen "hangi fazda" notu
+  raporTur: "gunluk",  // Rapor tür seçici
+  raporTurNot: null,   // Gri karta tıklanınca gösterilen "hangi fazda" notu
+  yonMezatN: 10        // Yönetici Analiz penceresi: son 5/10/20 mezat
 };
 
 function setState(updates) {

@@ -283,3 +283,223 @@ function generatePDF() {
 
   pdfOnizlemeAc(doc, pdfDosyaAdi("gunluk"));
 }
+
+// ═══════════════ 📊 YÖNETİCİ ANALİZ PDF (Rapor Faz 1) ═══════════════
+// 6 bölüm: KPI · Gelir Ayrıştırması · Ürün×Şube Heatmap · Şube VI/RS · Fırsat · Top/Bottom-10
+function generateYoneticiPDF() {
+  if (!pdfHazirMi()) { alert("PDF kütüphanesi yüklenemedi."); return; }
+  const yp = getYoneticiPencere(state.yonMezatN);
+  if (yp.gun1.length === 0) { alert("Bu filtreyle mezat verisi yok."); return; }
+
+  const filtreEtiket = state.sf ? state.sf.replace("GRUP:", "") + (state.sf.startsWith("GRUP:") ? " (Grup)" : "") : (state.sb ? state.sb : null);
+  const altB = "Son " + yp.gun1.length + " mezat: " + fD(yp.gun1[0]) + " – " + fD(yp.gun1[yp.gun1.length - 1]) +
+    (yp.gun0.length ? "   |   Kıyas: önceki " + yp.gun0.length + " mezat" : "") +
+    (filtreEtiket ? "   |   Filtre: " + filtreEtiket : "");
+  const doc = pdfBaslat("Çallı Çiçek — Yönetici Analiz Raporu", altB);
+  const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
+  let y = 82;
+
+  const g1 = yp.d1.reduce((s, r) => s + r.net, 0), q1 = yp.d1.reduce((s, r) => s + r.d, 0);
+  const g0 = yp.d0.reduce((s, r) => s + r.net, 0), q0 = yp.d0.reduce((s, r) => s + r.d, 0);
+  const rozet = (n1, n0) => n0 > 0 ? ((n1 >= n0 ? "▲ +" : "▼ ") + Math.abs((n1 - n0) / n0 * 100).toFixed(1) + "%") : "";
+
+  // ── 1) 6 KPI kutusu ──
+  const med1 = getMedyanGunlukDbn(yp.d1), med0 = getMedyanGunlukDbn(yp.d0);
+  const as1 = new Set(yp.d1.map(r => r.s)).size, as0 = new Set(yp.d0.map(r => r.s)).size;
+  const au1 = new Set(yp.d1.map(r => r.c)).size, au0 = new Set(yp.d0.map(r => r.c)).size;
+  const kpiler = [
+    ["NET GELİR", fmt(g1), rozet(g1, g0)],
+    ["DEMET", String(q1), rozet(q1, q0)],
+    ["ORT DBN", q1 > 0 ? fmt2(g1 / q1) : "—", (q0 > 0 && q1 > 0) ? rozet(g1 / q1, g0 / q0) : ""],
+    ["MEDYAN DBN", med1 !== null ? fmt2(med1) : "—", (med1 !== null && med0 !== null) ? rozet(med1, med0) : ""],
+    ["AKTİF ŞUBE", String(as1), rozet(as1, as0)],
+    ["AKTİF ÜRÜN", String(au1), rozet(au1, au0)]
+  ];
+  const kpiW = (W - 80 - 20) / 3;
+  kpiler.forEach((k, i) => {
+    const x = 40 + (i % 3) * (kpiW + 10);
+    const yy = y + Math.floor(i / 3) * 54;
+    doc.setFillColor(240, 253, 244);
+    doc.roundedRect(x, yy, kpiW, 46, 5, 5, "F");
+    doc.setFont("DejaVu", "normal"); doc.setFontSize(6.5); doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
+    doc.text(pdfMetin(k[0]), x + kpiW / 2, yy + 11, { align: "center" });
+    doc.setFont("DejaVu", "bold"); doc.setFontSize(12); doc.setTextColor(PDF_TEMA.yesil[0], PDF_TEMA.yesil[1], PDF_TEMA.yesil[2]);
+    doc.text(pdfMetin(k[1]), x + kpiW / 2, yy + 27, { align: "center" });
+    if (k[2]) {
+      const poz = k[2].indexOf("▲") === 0;
+      doc.setFont("DejaVu", "normal"); doc.setFontSize(7);
+      doc.setTextColor(poz ? 22 : 220, poz ? 163 : 38, poz ? 74 : 38);
+      doc.text(pdfMetin(k[2]), x + kpiW / 2, yy + 39, { align: "center" });
+    }
+  });
+  doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+  y += 2 * 54 + 8;
+
+  // ── 2) Gelir Ayrıştırması ──
+  doc.setFont("DejaVu", "bold"); doc.setFontSize(11);
+  doc.text(pdfMetin("Gelir Ayrıştırması"), 40, y + 4);
+  if (yp.gun1.length >= 3 && yp.gun0.length >= 3) {
+    const dg = decomposeGelir(yp.d1, yp.d0);
+    const isr = v => (v >= 0 ? "+" : "−") + fmt(Math.abs(v));
+    const drows = [
+      ["Hacim etkisi", isr(dg.hacim)],
+      ["Fiyat etkisi", isr(dg.fiyat)],
+      ["Ürün karması (Mix)", isr(dg.mix)],
+      ["Yeni / çıkan ürün", isr(dg.yeniCikan)],
+      ["TOPLAM ΔGelir", isr(dg.delta)]
+    ];
+    y = pdfTablo(doc, ["Bileşen", "Tutar"], drows, {
+      startY: y + 10, columnStyles: { 1: { halign: "right" } },
+      didParseCell: function(data) {
+        if (data.section !== "body") return;
+        if (data.row.index === drows.length - 1) { data.cell.styles.fontStyle = "bold"; data.cell.styles.fillColor = [240, 253, 244]; }
+        if (data.column.index === 1) {
+          const neg = String(data.cell.raw).indexOf("−") === 0;
+          data.cell.styles.textColor = neg ? [220, 38, 38] : [22, 120, 74];
+        }
+      }
+    }) + 6;
+    doc.setFont("DejaVu", "normal"); doc.setFontSize(8);
+    doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
+    const ozet = "Gelir " + isr(dg.delta) + ": " + isr(dg.hacim) + " hacim, " + isr(dg.fiyat) + " fiyat, " + isr(dg.mix) + " karma, " + isr(dg.yeniCikan) + " yeni/çıkan ürün.";
+    doc.text(doc.splitTextToSize(pdfMetin(ozet), W - 80), 40, y + 4);
+    doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+    y += 20;
+  } else {
+    doc.setFont("DejaVu", "normal"); doc.setFontSize(8.5);
+    doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
+    doc.text(pdfMetin("Yetersiz dönem verisi — her iki pencerede ≥3 mezat günü gerekli."), 40, y + 16);
+    doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+    y += 28;
+  }
+
+  // Kombo istatistikleri (heatmap + top/bottom için ortak)
+  const komboM = {};
+  yp.d1.forEach(r => {
+    const k = r.c + "|" + r.s;
+    if (!komboM[k]) komboM[k] = { c: r.c, s: r.s, net: 0, d: 0, gunler: new Set() };
+    komboM[k].net += r.net; komboM[k].d += r.d; komboM[k].gunler.add(r.t);
+  });
+  Object.values(komboM).forEach(k => { k.n = k.gunler.size; k.dbn = k.d > 0 ? k.net / k.d : 0; });
+  const yRS = getRS(yp.d1);
+  const vi = getValueIndex(yp.d1);
+
+  // ── 3) Ürün × Şube dbn Heatmap ──
+  if (y > H - 160) { doc.addPage(); y = 80; }
+  doc.setFont("DejaVu", "bold"); doc.setFontSize(11);
+  doc.text(pdfMetin("Ürün × Şube dbn Isı Tablosu"), 40, y + 4);
+  const urunler = [...new Set(yp.d1.map(r => r.c))].map(c => ({ c, d: yp.d1.filter(r => r.c === c).reduce((s, r) => s + r.d, 0) })).sort((a, b) => b.d - a.d).map(x => x.c);
+  const subeSirali = vi.map(v => v.sube).slice(0, 8);
+  const hmMeta = [];
+  const hmRows = urunler.map(c => {
+    const satirVals = [];
+    const row = [c].concat(subeSirali.map(s => {
+      const k = komboM[c + "|" + s];
+      if (!k) { satirVals.push(null); return ""; }
+      satirVals.push(k);
+      return fmt(k.dbn) + "\n" + k.d + "dm" + (k.n < 3 ? "\nn<3" : "");
+    }));
+    const dbnler = satirVals.filter(v => v && v.n >= 3).map(v => v.dbn);
+    const mn = dbnler.length ? Math.min.apply(null, dbnler) : 0;
+    const mx = dbnler.length ? Math.max.apply(null, dbnler) : 1;
+    hmMeta.push(satirVals.map(v => v === null ? null : { n: v.n, norm: (mx > mn && v.n >= 3) ? (v.dbn - mn) / (mx - mn) : (v.n >= 3 ? 0.5 : 0) }));
+    return row;
+  });
+  y = pdfTablo(doc, ["Ürün"].concat(subeSirali), hmRows, {
+    startY: y + 10, kucuk: true,
+    columnStyles: (function(){ const cs = { 0: { cellWidth: 86 } }; for (let i = 1; i <= subeSirali.length; i++) cs[i] = { halign: "center" }; return cs; })(),
+    didParseCell: function(data) {
+      if (data.section !== "body" || data.column.index === 0) return;
+      const meta = hmMeta[data.row.index][data.column.index - 1];
+      if (meta === null) { data.cell.styles.fillColor = [250, 250, 250]; return; }
+      if (meta.n < 3) { data.cell.styles.fillColor = [235, 235, 235]; data.cell.styles.textColor = [150, 150, 150]; return; }
+      const t = meta.norm;
+      data.cell.styles.fillColor = [Math.round(245 - t * 135), Math.round(250 - t * 60), Math.round(247 - t * 107)];
+    }
+  }) + 6;
+  doc.setFont("DejaVu", "normal"); doc.setFontSize(7);
+  doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
+  doc.text(pdfMetin("Renk: satır bazında min–max normalize dbn (koyu yeşil = o ürünün en iyi şubesi) · alt satır: demet · n<3 gri" + (vi.length > 8 ? " · ilk 8 şube gösterildi" : "")), 40, y + 2);
+  doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+  y += 16;
+
+  // ── 4) Şube tablosu: Gelir payı · Hacim payı · VI · RS ──
+  if (y > H - 140) { doc.addPage(); y = 80; }
+  doc.setFont("DejaVu", "bold"); doc.setFontSize(11);
+  doc.text(pdfMetin("Şube Tablosu"), 40, y + 4);
+  const rsFmtT = v => v ? "RS " + v.rs.toFixed(2).replace(".", ",") + " (n=" + v.n + ")" : "—";
+  const srows = vi.map(v => {
+    const rsv = yRS.sube[v.sube];
+    return [v.sube, "%" + v.gelirPay.toFixed(1), "%" + v.hacimPay.toFixed(1), v.vi !== null ? v.vi.toFixed(2).replace(".", ",") : "—", rsFmtT(rsv)];
+  });
+  y = pdfTablo(doc, ["Şube", "Gelir Payı", "Hacim Payı", "VI", "RS"], srows, {
+    startY: y + 10, columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" } },
+    didParseCell: function(data) {
+      if (data.section !== "body" || data.column.index !== 4) return;
+      const raw = String(data.cell.raw);
+      const m = raw.match(/RS ([\d,]+)/);
+      if (!m) { data.cell.styles.textColor = [150, 150, 150]; return; }
+      const val = parseFloat(m[1].replace(",", "."));
+      data.cell.styles.textColor = val > 1.05 ? [22, 120, 74] : val < 0.95 ? [220, 38, 38] : [100, 116, 139];
+    }
+  }) + 6;
+  doc.setFont("DejaVu", "normal"); doc.setFontSize(7);
+  doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
+  doc.text(pdfMetin("VI (Value Index) = Gelir Payı / Hacim Payı — sunum metriğidir, karar hesaplarına girmez. RS renk: >1,05 yeşil · 0,95–1,05 gri · <0,95 kırmızı."), 40, y + 2);
+  doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+  y += 16;
+
+  // ── 5) Brüt Fiyat Fırsatı (çift değer) ──
+  if (y > H - 130) { doc.addPage(); y = 80; }
+  doc.setFont("DejaVu", "bold"); doc.setFontSize(11);
+  doc.text(pdfMetin("Brüt Fiyat Fırsatı"), 40, y + 4);
+  const fir = getBrutFiyatFirsati(yp.d1, yp.oncesi);
+  doc.setFont("DejaVu", "bold"); doc.setFontSize(9.5);
+  doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
+  doc.text(pdfMetin("Teorik: " + fmt(fir.teorik) + " (üst sınır)"), 40, y + 18);
+  doc.setTextColor(PDF_TEMA.yesil[0], PDF_TEMA.yesil[1], PDF_TEMA.yesil[2]);
+  doc.text(pdfMetin("Kapasite ayarlı: " + fmt(fir.ayarli)), 40, y + 32);
+  doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+  y += 40;
+  if (fir.topKombolar.length) {
+    y = pdfTablo(doc, ["Ürün → En İyi Şube", "Teorik", "Kapasite Ayarlı", "Örnek Gün"],
+      fir.topKombolar.map(k => [k.cicek + " → " + k.hedefSube, fmt(k.teorik), fmt(k.ayarli), fD(k.ornekGun)]),
+      { startY: y, kucuk: true, columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" } } }) + 6;
+  }
+  doc.setFont("DejaVu", "normal"); doc.setFontSize(7);
+  doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
+  doc.text(doc.splitTextToSize(pdfMetin("İlave hacmin aynı fiyattan emileceği garanti değildir — 'kayıp' değil, fiyat farkı göstergesidir. Kapasite ayarı: en iyi şubenin dönem-öncesi P75 günlük absorpsiyonu tavandır."), W - 80), 40, y + 2);
+  doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+  y += 22;
+
+  // ── 6) Top-10 / Bottom-10 kombinasyon (n≥3) ──
+  if (y > H - 140) { doc.addPage(); y = 80; }
+  const uygunK = Object.values(komboM).filter(k => k.n >= 3).sort((a, b) => b.dbn - a.dbn);
+  const kSatir = k => {
+    const rsv = yRS.kombo[k.c + "|" + k.s];
+    const arz = getArzDuzenlilik(k.c, k.s, yp.gun1);
+    return [k.c + " → " + k.s, String(k.n), String(k.d), fmt(k.dbn), rsFmtT(rsv), arz ? arz.satis + "/" + arz.toplam + " · %" + arz.oran.toFixed(0) : "—"];
+  };
+  const rsRenkHucre = function(data) {
+    if (data.section !== "body" || data.column.index !== 4) return;
+    const m = String(data.cell.raw).match(/RS ([\d,]+)/);
+    if (!m) { data.cell.styles.textColor = [150, 150, 150]; return; }
+    const val = parseFloat(m[1].replace(",", "."));
+    data.cell.styles.textColor = val > 1.05 ? [22, 120, 74] : val < 0.95 ? [220, 38, 38] : [100, 116, 139];
+  };
+  doc.setFont("DejaVu", "bold"); doc.setFontSize(11);
+  doc.text(pdfMetin("Top-10 Kombinasyon (dbn)"), 40, y + 4);
+  y = pdfTablo(doc, ["Kombo", "n", "Demet", "dbn", "RS", "Arz Düzenliliği"], uygunK.slice(0, 10).map(kSatir),
+    { startY: y + 10, kucuk: true, columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" } }, didParseCell: rsRenkHucre }) + 14;
+  if (y > H - 140) { doc.addPage(); y = 80; }
+  doc.setFont("DejaVu", "bold"); doc.setFontSize(11);
+  doc.text(pdfMetin("Bottom-10 Kombinasyon (dbn)"), 40, y + 4);
+  y = pdfTablo(doc, ["Kombo", "n", "Demet", "dbn", "RS", "Arz Düzenliliği"], uygunK.slice(-10).reverse().map(kSatir),
+    { startY: y + 10, kucuk: true, columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" } }, didParseCell: rsRenkHucre }) + 8;
+  doc.setFont("DejaVu", "normal"); doc.setFontSize(7);
+  doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
+  doc.text(pdfMetin("n<3 mezat günlü kombolar listelere dahil edilmez."), 40, y + 2);
+
+  pdfOnizlemeAc(doc, pdfDosyaAdi("yonetici"));
+}
