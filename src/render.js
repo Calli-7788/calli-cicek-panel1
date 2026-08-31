@@ -2651,10 +2651,28 @@ function render() {
         });
         html += `</div>`;
 
-        // Ayrıştırma özet cümlesi
+        // İş 7: ortalama-medyan uyum satırı (koşul sağlanırsa)
+        const yOmy = getOrtMedyanYorum(q1 > 0 ? g1 / q1 : 0, q0 > 0 ? g0 / q0 : 0, med1, med0);
+        if (yOmy) html += `<div style="font-size:9.5px;color:#94a3b8;margin-bottom:8px">${esc(yOmy)}</div>`;
+
+        // İş 2: 🧭 Yönetici Bulguları
+        const yBulgular = getYoneticiBulgulari(yp);
+        const yMaddeler = yBulgular.maddeler.filter(m => m.etiket !== "fiyat tabanı");
+        if (yMaddeler.length) {
+          html += `<div style="padding:8px 10px;border-radius:8px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);margin-bottom:8px">`;
+          html += `<div style="font-size:11px;font-weight:700;color:#f8fafc;margin-bottom:5px">🧭 Yönetici Bulguları</div>`;
+          yMaddeler.forEach(m => {
+            html += `<div style="font-size:9.5px;color:#cbd5e1;padding:2px 0;line-height:1.5">• <span style="color:${m.css};font-weight:700">[${esc(m.etiket)}]</span> Bulgu: ${esc(m.bulgu)} <span style="color:#64748b">→ İzleme önerisi: ${esc(m.izleme)}</span></div>`;
+          });
+          html += `<div style="font-size:8px;color:#475569;margin-top:4px">${esc(yBulgular.not)}</div>`;
+          html += `</div>`;
+        }
+
+        // Ayrıştırma özet cümlesi + mutabakat kontrolü (İş 6)
         if (yp.gun1.length >= 3 && yp.gun0.length >= 3) {
           const dg = decomposeGelir(yp.d1, yp.d0);
           const isr = v => (v >= 0 ? "+" : "−") + fmt(Math.abs(v));
+          if (!dg.saglamaOK) html += `<div style="padding:6px 10px;border-radius:8px;background:rgba(220,38,38,0.9);color:#fff;font-size:10px;font-weight:700;margin-bottom:6px">⚠ AYRIŞTIRMA MUTABAKATSIZ — bileşen toplamı ΔGelir'e eşit değil</div>`;
           html += `<div style="padding:8px 10px;border-radius:8px;background:rgba(168,85,247,0.07);border:1px solid rgba(168,85,247,0.15);font-size:10.5px;color:#e2e8f0;margin-bottom:8px">Gelir ${isr(dg.delta)}: ${isr(dg.hacim)} hacim, ${isr(dg.fiyat)} fiyat, ${isr(dg.mix)} karma, ${isr(dg.yeniCikan)} yeni/çıkan ürün</div>`;
         } else {
           html += `<div style="font-size:10px;color:#64748b;margin-bottom:8px">Gelir ayrıştırması: yetersiz dönem verisi (iki pencerede ≥3 mezat günü gerekli)</div>`;

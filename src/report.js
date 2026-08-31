@@ -334,7 +334,58 @@ function generateYoneticiPDF() {
     }
   });
   doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
-  y += 2 * 54 + 8;
+  y += 2 * 54 + 4;
+
+  // ── İş 7: Ortalama + medyan birlikte yorum (koşul sağlanırsa tek satır) ──
+  const omy = getOrtMedyanYorum(q1 > 0 ? g1 / q1 : 0, q0 > 0 ? g0 / q0 : 0, med1, med0);
+  if (omy) {
+    doc.setFont("DejaVu", "normal"); doc.setFontSize(7.5);
+    doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
+    doc.text(doc.splitTextToSize(pdfMetin(omy), W - 80), 40, y + 6);
+    doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+    y += 16;
+  }
+
+  // ── İş 2: 🧭 Yönetici Bulguları (KPI'ların hemen altında — 30 saniye hedefi) ──
+  const bulgular = getYoneticiBulgulari(yp);
+  const bulguMaddeler = bulgular.maddeler.filter(m => m.etiket !== "fiyat tabanı"); // ort-medyan yukarıda tek satır
+  if (bulguMaddeler.length) {
+    doc.setFont("DejaVu", "bold"); doc.setFontSize(11);
+    doc.text(pdfMetin("🧭 Yönetici Bulguları"), 40, y + 8);
+    y += 14;
+    doc.setFontSize(7.5);
+    bulguMaddeler.forEach(m => {
+      const satir = "[" + m.etiket + "]  Bulgu: " + m.bulgu + "  →  İzleme önerisi: " + m.izleme;
+      const lines = doc.splitTextToSize(pdfMetin(satir), W - 92);
+      if (y + lines.length * 9 > H - 60) { doc.addPage(); y = 80; }
+      doc.setFont("DejaVu", "bold");
+      doc.setTextColor(m.renk[0], m.renk[1], m.renk[2]);
+      doc.text("•", 42, y + 6);
+      doc.setFont("DejaVu", "normal");
+      doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+      lines.forEach((l, li) => {
+        if (li === 0) {
+          // etiket kısmını renkli bas
+          const etiketStr = "[" + m.etiket + "]";
+          doc.setFont("DejaVu", "bold");
+          doc.setTextColor(m.renk[0], m.renk[1], m.renk[2]);
+          doc.text(pdfMetin(etiketStr), 50, y + 6);
+          doc.setFont("DejaVu", "normal");
+          doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+          doc.text(pdfMetin(l.substring(etiketStr.length)), 50 + doc.getTextWidth(pdfMetin(etiketStr)), y + 6);
+        } else {
+          doc.text(pdfMetin(l), 50, y + 6);
+        }
+        y += 9;
+      });
+      y += 2;
+    });
+    doc.setFontSize(6.5);
+    doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
+    doc.text(pdfMetin(bulgular.not), 40, y + 5);
+    doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+    y += 14;
+  }
 
   // ── 2) Gelir Ayrıştırması ──
   doc.setFont("DejaVu", "bold"); doc.setFontSize(11);
@@ -360,12 +411,32 @@ function generateYoneticiPDF() {
         }
       }
     }) + 6;
+    // İş 6: Otomatik mutabakat — HER üretimde koşar; geçmezse kırmızı band (sessiz yanlış yok)
+    window.__pdfMutabakatBandi = false;
+    if (!dg.saglamaOK) {
+      window.__pdfMutabakatBandi = true;
+      doc.setFillColor(220, 38, 38);
+      doc.rect(40, y - 2, W - 80, 16, "F");
+      doc.setFont("DejaVu", "bold"); doc.setFontSize(8.5);
+      doc.setTextColor(255, 255, 255);
+      doc.text(pdfMetin("⚠ AYRIŞTIRMA MUTABAKATSIZ — bileşen toplamı ΔGelir'e eşit değil, değerlere güvenme"), 46, y + 9);
+      doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+      y += 20;
+    }
     doc.setFont("DejaVu", "normal"); doc.setFontSize(8);
     doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
     const ozet = "Gelir " + isr(dg.delta) + ": " + isr(dg.hacim) + " hacim, " + isr(dg.fiyat) + " fiyat, " + isr(dg.mix) + " karma, " + isr(dg.yeniCikan) + " yeni/çıkan ürün.";
     doc.text(doc.splitTextToSize(pdfMetin(ozet), W - 80), 40, y + 4);
+    // İş 6: Ana sürücü cümlesi — yüzde payı YALNIZ tüm bileşenler aynı işaretliyse
+    const anaBil = [["hacim", dg.hacim], ["fiyat", dg.fiyat], ["ürün karması", dg.mix], ["yeni/çıkan ürün", dg.yeniCikan]];
+    const anaSurucu = anaBil.reduce((mx, b) => Math.abs(b[1]) > Math.abs(mx[1]) ? b : mx);
+    const ayniIsaretMi = anaBil.every(b => b[1] >= 0) || anaBil.every(b => b[1] <= 0);
+    const anaPay = (ayniIsaretMi && dg.delta !== 0) ? " (pay %" + Math.abs(anaSurucu[1] / dg.delta * 100).toFixed(0) + ")" : "";
+    doc.setFont("DejaVu", "bold");
+    doc.text(pdfMetin("Değişimin ana sürücüsü: " + anaSurucu[0] + " (" + isr(anaSurucu[1]) + ")" + anaPay), 40, y + 15);
+    doc.setFont("DejaVu", "normal");
     doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
-    y += 20;
+    y += 30;
   } else {
     doc.setFont("DejaVu", "normal"); doc.setFontSize(8.5);
     doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
@@ -421,34 +492,61 @@ function generateYoneticiPDF() {
   doc.setFont("DejaVu", "normal"); doc.setFontSize(7);
   doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
   doc.text(pdfMetin("Renk: satır bazında min–max normalize dbn (koyu yeşil = o ürünün en iyi şubesi) · alt satır: demet · n<3 gri" + (vi.length > 8 ? " · ilk 8 şube gösterildi" : "")), 40, y + 2);
+  y += 10;
+  // İş 5: Ürün×şube otomatik bulgular — heatmap "hangi ürün hangi şubeyle iyi?" cevabı
+  const kb = getKomboBulgulari(Object.values(komboM), yRS.kombo, yp.gun1);
+  const kbFmt = k => k.c + "→" + k.s + " (RS " + k.rs.toFixed(2).replace(".", ",") + ", n=" + k.n + ")";
+  doc.setFontSize(7.5);
+  if (kb.guclu.length) {
+    doc.setTextColor(22, 120, 74);
+    doc.text(doc.splitTextToSize(pdfMetin("İyi eşleşenler: " + kb.guclu.map(kbFmt).join(" · ")), W - 80), 40, y + 4);
+    y += 10;
+  }
+  if (kb.zayif.length) {
+    doc.setTextColor(220, 38, 38);
+    doc.text(doc.splitTextToSize(pdfMetin("Zayıf eşleşenler: " + kb.zayif.map(kbFmt).join(" · ")), W - 80), 40, y + 4);
+    y += 10;
+  }
+  if (kb.kesif.length) {
+    doc.setTextColor(37, 99, 235);
+    doc.text(doc.splitTextToSize(pdfMetin("Keşif adayları: " + kb.kesif.map(kbFmt).join(" · ")), W - 80), 40, y + 4);
+    y += 10;
+  }
   doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
-  y += 16;
+  y += 8;
 
   // ── 4) Şube tablosu: Gelir payı · Hacim payı · VI · RS ──
   if (y > H - 140) { doc.addPage(); y = 80; }
   doc.setFont("DejaVu", "bold"); doc.setFontSize(11);
   doc.text(pdfMetin("Şube Tablosu"), 40, y + 4);
   const rsFmtT = v => v ? "RS " + v.rs.toFixed(2).replace(".", ",") + " (n=" + v.n + ")" : "—";
+  const subeEtiketleri = [];
   const srows = vi.map(v => {
     const rsv = yRS.sube[v.sube];
-    return [v.sube, "%" + v.gelirPay.toFixed(1), "%" + v.hacimPay.toFixed(1), v.vi !== null ? v.vi.toFixed(2).replace(".", ",") : "—", rsFmtT(rsv)];
+    const et = getVeriGuveni(rsv ? rsv.n : null, rsv ? rsv.rs : null, null, yp.gun1.length);
+    subeEtiketleri.push(et);
+    return [v.sube, "%" + v.gelirPay.toFixed(1), "%" + v.hacimPay.toFixed(1), v.vi !== null ? v.vi.toFixed(2).replace(".", ",") : "—", rsFmtT(rsv), et.etiket];
   });
-  y = pdfTablo(doc, ["Şube", "Gelir Payı", "Hacim Payı", "VI", "RS"], srows, {
-    startY: y + 10, columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" } },
+  y = pdfTablo(doc, ["Şube", "Gelir Payı", "Hacim Payı", "VI", "RS", "Veri Güveni"], srows, {
+    startY: y + 10, columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" } },
     didParseCell: function(data) {
-      if (data.section !== "body" || data.column.index !== 4) return;
-      const raw = String(data.cell.raw);
-      const m = raw.match(/RS ([\d,]+)/);
-      if (!m) { data.cell.styles.textColor = [150, 150, 150]; return; }
-      const val = parseFloat(m[1].replace(",", "."));
-      data.cell.styles.textColor = val > 1.05 ? [22, 120, 74] : val < 0.95 ? [220, 38, 38] : [100, 116, 139];
+      if (data.section !== "body") return;
+      if (data.column.index === 4) {
+        const m = String(data.cell.raw).match(/RS ([\d,]+)/);
+        if (!m) { data.cell.styles.textColor = [150, 150, 150]; return; }
+        const val = parseFloat(m[1].replace(",", "."));
+        data.cell.styles.textColor = val > 1.05 ? [22, 120, 74] : val < 0.95 ? [220, 38, 38] : [100, 116, 139];
+      }
+      if (data.column.index === 5 && subeEtiketleri[data.row.index]) {
+        data.cell.styles.textColor = subeEtiketleri[data.row.index].renk;
+      }
     }
   }) + 6;
   doc.setFont("DejaVu", "normal"); doc.setFontSize(7);
   doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
-  doc.text(pdfMetin("VI (Value Index) = Gelir Payı / Hacim Payı — sunum metriğidir, karar hesaplarına girmez. RS renk: >1,05 yeşil · 0,95–1,05 gri · <0,95 kırmızı."), 40, y + 2);
+  doc.text(doc.splitTextToSize(pdfMetin("VI (Value Index) = Gelir Payı / Hacim Payı — sunum metriğidir, karar hesaplarına girmez. RS renk: >1,05 yeşil · 0,95–1,05 gri · <0,95 kırmızı. Rol ayrımı: RS ana performans göstergesidir (gün+ürün normalize); VI<1 iken RS≈1 ise fiyat piyasayla uyumludur, fark ürün karmasındandır — şube \"kötü\" ilan edilmez. Veri güveni etiketi yalnız rapor dilidir, Planlayıcı kararına girmez."), W - 80), 40, y + 2);
   doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
-  y += 16;
+  y += 26;
 
   // ── 5) Brüt Fiyat Fırsatı (çift değer) ──
   if (y > H - 130) { doc.addPage(); y = 80; }
@@ -479,24 +577,35 @@ function generateYoneticiPDF() {
   const kSatir = k => {
     const rsv = yRS.kombo[k.c + "|" + k.s];
     const arz = getArzDuzenlilik(k.c, k.s, yp.gun1);
-    return [k.c + " → " + k.s, String(k.n), String(k.d), fmt(k.dbn), rsFmtT(rsv), arz ? arz.satis + "/" + arz.toplam + " · %" + arz.oran.toFixed(0) : "—"];
+    const et = getVeriGuveni(k.n, rsv ? rsv.rs : null, arz ? arz.oran : null, yp.gun1.length);
+    return [k.c + " → " + k.s, String(k.n), String(k.d), fmt(k.dbn), rsFmtT(rsv), arz ? arz.satis + "/" + arz.toplam + " · %" + arz.oran.toFixed(0) : "—", et.etiket];
   };
-  const rsRenkHucre = function(data) {
-    if (data.section !== "body" || data.column.index !== 4) return;
-    const m = String(data.cell.raw).match(/RS ([\d,]+)/);
-    if (!m) { data.cell.styles.textColor = [150, 150, 150]; return; }
-    const val = parseFloat(m[1].replace(",", "."));
-    data.cell.styles.textColor = val > 1.05 ? [22, 120, 74] : val < 0.95 ? [220, 38, 38] : [100, 116, 139];
+  const komboEtiketRenk = satirlar => function(data) {
+    if (data.section !== "body") return;
+    if (data.column.index === 4) {
+      const m = String(data.cell.raw).match(/RS ([\d,]+)/);
+      if (!m) { data.cell.styles.textColor = [150, 150, 150]; return; }
+      const val = parseFloat(m[1].replace(",", "."));
+      data.cell.styles.textColor = val > 1.05 ? [22, 120, 74] : val < 0.95 ? [220, 38, 38] : [100, 116, 139];
+    }
+    if (data.column.index === 6) {
+      const et = satirlar[data.row.index] ? satirlar[data.row.index][6] : "";
+      data.cell.styles.textColor = et === "kanıtlanmış sinyal" ? [22, 120, 74] : et === "risk sinyali" ? [220, 38, 38] : et === "keşif adayı" ? [37, 99, 235] : [130, 140, 155];
+    }
   };
+  const kKolonlar = ["Kombo", "n", "Demet", "dbn", "RS", "Arz Düzenliliği", "Veri Güveni"];
+  const kStil = { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right" } };
   doc.setFont("DejaVu", "bold"); doc.setFontSize(11);
   doc.text(pdfMetin("Top-10 Kombinasyon (dbn)"), 40, y + 4);
-  y = pdfTablo(doc, ["Kombo", "n", "Demet", "dbn", "RS", "Arz Düzenliliği"], uygunK.slice(0, 10).map(kSatir),
-    { startY: y + 10, kucuk: true, columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" } }, didParseCell: rsRenkHucre }) + 14;
+  const topSatirlar = uygunK.slice(0, 10).map(kSatir);
+  y = pdfTablo(doc, kKolonlar, topSatirlar,
+    { startY: y + 10, kucuk: true, columnStyles: kStil, didParseCell: komboEtiketRenk(topSatirlar) }) + 14;
   if (y > H - 140) { doc.addPage(); y = 80; }
   doc.setFont("DejaVu", "bold"); doc.setFontSize(11);
   doc.text(pdfMetin("Bottom-10 Kombinasyon (dbn)"), 40, y + 4);
-  y = pdfTablo(doc, ["Kombo", "n", "Demet", "dbn", "RS", "Arz Düzenliliği"], uygunK.slice(-10).reverse().map(kSatir),
-    { startY: y + 10, kucuk: true, columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" } }, didParseCell: rsRenkHucre }) + 8;
+  const botSatirlar = uygunK.slice(-10).reverse().map(kSatir);
+  y = pdfTablo(doc, kKolonlar, botSatirlar,
+    { startY: y + 10, kucuk: true, columnStyles: kStil, didParseCell: komboEtiketRenk(botSatirlar) }) + 8;
   doc.setFont("DejaVu", "normal"); doc.setFontSize(7);
   doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
   doc.text(pdfMetin("n<3 mezat günlü kombolar listelere dahil edilmez."), 40, y + 2);
