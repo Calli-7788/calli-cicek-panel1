@@ -81,6 +81,7 @@ function pdfTablo(doc, kolonlar, satirlar, opts) {
   if (opts.bolunmez) ayar.pageBreak = "avoid";
   if (opts.columnStyles) ayar.columnStyles = opts.columnStyles;
   if (opts.didParseCell) ayar.didParseCell = opts.didParseCell;
+  if (opts.fontSize) { ayar.styles.fontSize = opts.fontSize; ayar.headStyles.fontSize = opts.fontSize; }
   doc.autoTable(ayar);
   return doc.lastAutoTable.finalY;
 }

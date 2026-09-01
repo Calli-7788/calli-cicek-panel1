@@ -591,9 +591,13 @@ function getArzDuzenlilik(cicek, sube, gunler) {
 }
 
 // Brüt Fiyat Fırsatı — ÇİFT DEĞER (kilitli karar #1).
-// TEORİK: üst sınır. KAPASİTE AYARLI: en iyi şubenin dönem-öncesi P75 absorpsiyon tavanıyla.
+// TEORİK: üst sınır. KAPASİTE AYARLI: GÜN-BAZLI walk-forward P75 tavanı (Faz 1.2):
+// her fırsat günü t için P75, t'den ÖNCEKİ (t hariç) TÜM geçmiş günlerin kombo günlük
+// demet dağılımından hesaplanır — pencere içindeki t-öncesi günler de dahil.
+// availableCapacity(t) = max(0, P75_{<t} − hedefGerçekHacim_t). Granülarite ürün×şube×GÜN;
+// dönem toplamı hiçbir yerde günlük P75 ile karşılaştırılmaz — gün gün hesaplanıp toplanır.
 // İlave hacmin aynı fiyattan emileceği garanti değildir — "kayıp" değil, fiyat farkı göstergesidir.
-function getBrutFiyatFirsati(rows, oncesiTarih) {
+function getBrutFiyatFirsati(rows) {
   const gunUrun = {};
   rows.forEach(r => {
     const k = r.t + "|" + r.c;
@@ -601,21 +605,27 @@ function getBrutFiyatFirsati(rows, oncesiTarih) {
     if (!gunUrun[k][r.s]) gunUrun[k][r.s] = { net: 0, d: 0 };
     gunUrun[k][r.s].net += r.net; gunUrun[k][r.s].d += r.d;
   });
-  // Dönem-öncesi P75 absorpsiyon (kombo günlük demetleri, t < oncesiTarih)
-  const p75Cache = {};
-  const p75Al = (c, s) => {
+  // Kombo günlük demet tarihçesi (TÜM veri, kronolojik) — gün-bazlı P75 dilimleri için
+  const komboGunlukCache = {};
+  const komboGunlukAl = (c, s) => {
     const kk = c + "|" + s;
-    if (p75Cache[kk] !== undefined) return p75Cache[kk];
-    const gunluk = {};
-    ALL_DATA.forEach(r => { if (r.c === c && r.s === s && r.t < oncesiTarih) gunluk[r.t] = (gunluk[r.t] || 0) + r.d; });
-    const v = Object.values(gunluk).sort((a, b) => a - b);
-    const p75 = v.length === 0 ? 0 : (v.length >= 4 ? v[Math.floor(v.length * 0.75)] : v[Math.floor((v.length - 1) / 2)]);
-    p75Cache[kk] = p75;
-    return p75;
+    if (komboGunlukCache[kk]) return komboGunlukCache[kk];
+    const g = {};
+    ALL_DATA.forEach(r => { if (r.c === c && r.s === s) g[r.t] = (g[r.t] || 0) + r.d; });
+    komboGunlukCache[kk] = Object.keys(g).sort().map(t => ({ t, d: g[t] }));
+    return komboGunlukCache[kk];
+  };
+  const p75Gun = (c, s, t) => {
+    const v = komboGunlukAl(c, s).filter(x => x.t < t).map(x => x.d).sort((a, b) => a - b);
+    return {
+      p75: v.length === 0 ? 0 : (v.length >= 4 ? v[Math.floor(v.length * 0.75)] : v[Math.floor((v.length - 1) / 2)]),
+      n: v.length
+    };
   };
 
   let teorik = 0, ayarli = 0, tavanDevredeSayisi = 0;
   const komboAgg = {};
+  const detay = [];   // patron debug tablosu için gün-bazlı ham döküm
   Object.keys(gunUrun).forEach(k => {
     const subeler = gunUrun[k];
     const adlar = Object.keys(subeler);
@@ -631,8 +641,10 @@ function getBrutFiyatFirsati(rows, oncesiTarih) {
     let gunTeorik = 0, gunAyarli = 0;
     const digerler = adlar.filter(s => s !== enIyi && enIyiDbn > subeler[s].dbn);
     digerler.forEach(s => { gunTeorik += subeler[s].d * (enIyiDbn - subeler[s].dbn); });
-    // Kapasite ayarlı: taşınabilir = max(0, P75 − en iyi şubede o gün zaten satılan)
-    let tasinabilir = Math.max(0, p75Al(c, enIyi) - subeler[enIyi].d);
+    // Gün-bazlı kapasite: P75_{<t} − o gün hedefte zaten satılan
+    const cap = p75Gun(c, enIyi, t);
+    let tasinabilir = Math.max(0, cap.p75 - subeler[enIyi].d);
+    const kapasite = tasinabilir;
     const ucuzdanSirali = digerler.slice().sort((a, b) => subeler[a].dbn - subeler[b].dbn);
     let tasinacakToplam = 0;
     ucuzdanSirali.forEach(s => { tasinacakToplam += subeler[s].d; });
@@ -646,6 +658,12 @@ function getBrutFiyatFirsati(rows, oncesiTarih) {
     teorik += gunTeorik;
     ayarli += gunAyarli;
     if (gunTeorik > 0) {
+      detay.push({
+        t, c, hedef: enIyi, hedefHacim: subeler[enIyi].d, hedefDbn: enIyiDbn,
+        p75: cap.p75, p75n: cap.n, kapasite,
+        gunTeorik, gunAyarli,
+        kaynaklar: digerler.map(s => ({ s, d: subeler[s].d, dbn: subeler[s].dbn, fark: enIyiDbn - subeler[s].dbn }))
+      });
       const ka = c + "|" + enIyi;
       if (!komboAgg[ka]) komboAgg[ka] = { cicek: c, hedefSube: enIyi, teorik: 0, ayarli: 0, ornekGun: t, ornekTutar: 0 };
       komboAgg[ka].teorik += gunTeorik;
@@ -654,7 +672,7 @@ function getBrutFiyatFirsati(rows, oncesiTarih) {
     }
   });
   const topKombolar = Object.values(komboAgg).sort((a, b) => b.teorik - a.teorik).slice(0, 3);
-  return { teorik, ayarli, topKombolar, tavanDevredeSayisi };
+  return { teorik, ayarli, topKombolar, tavanDevredeSayisi, detay };
 }
 
 // Medyan dbn: dönemdeki MEZAT GÜNÜ dbn'lerinin medyanı (satır bazlı değil)
@@ -764,16 +782,17 @@ function getYoneticiBulgulari(yp) {
       izleme: "bileşen dengesini sonraki raporda yakından izle" });
   }
 
-  // 2) Güçlü şube: kanıtlanmış + en yüksek RS + anlamlı hacim payı
+  // 2) Güçlü şubeler: kanıtlanmış + en yüksek RS + anlamlı hacim payı (en fazla 2)
   const subeAdaylar = vi.map(v => {
     const r = rs.sube[v.sube];
     return { v, r, g: getVeriGuveni(r ? r.n : null, r ? r.rs : null, null, yp.gun1.length) };
   });
-  const guclüSube = subeAdaylar.filter(x => x.g.etiket === "kanıtlanmış sinyal" && x.v.hacimPay >= 10)
-    .sort((a, b) => b.r.rs - a.r.rs)[0];
-  if (guclüSube) M.push({ etiket: "kanıtlanmış sinyal", css: "#34d399", renk: [22, 120, 74],
-    bulgu: guclüSube.v.sube + " şubesi piyasa üstü: RS " + guclüSube.r.rs.toFixed(2).replace(".", ",") + " (n=" + guclüSube.r.n + "), hacim payı %" + guclüSube.v.hacimPay.toFixed(0),
-    izleme: "yakından izle" });
+  subeAdaylar.filter(x => x.g.etiket === "kanıtlanmış sinyal" && x.v.hacimPay >= 10)
+    .sort((a, b) => b.r.rs - a.r.rs).slice(0, 2).forEach(gs => {
+      M.push({ etiket: "kanıtlanmış sinyal", css: "#34d399", renk: [22, 120, 74],
+        bulgu: gs.v.sube + " şubesi piyasa üstü: RS " + gs.r.rs.toFixed(2).replace(".", ",") + " (n=" + gs.r.n + "), hacim payı %" + gs.v.hacimPay.toFixed(0),
+        izleme: "yakından izle" });
+    });
 
   // 3) Zayıf şube: risk sinyali
   const zayifSube = subeAdaylar.filter(x => x.g.etiket === "risk sinyali").sort((a, b) => a.r.rs - b.r.rs)[0];
@@ -795,7 +814,12 @@ function getYoneticiBulgulari(yp) {
       bulgu: k.c + " → " + k.s + " zayıf eşleşme: RS " + k.rs.toFixed(2).replace(".", ",") + " (n=" + k.n + ", " + k.d + " dm)",
       izleme: "Planlayıcı tahsisinde dikkat" });
   }
-  // 6) Keşif adayı
+  // 6) Keşif adayları — önce şube (etiket "keşif adayı"), sonra kombo
+  const kesifSube = subeAdaylar.filter(x => x.g.etiket === "keşif adayı")
+    .sort((a, b) => b.r.rs - a.r.rs)[0];
+  if (kesifSube) M.push({ etiket: "keşif adayı", css: "#60a5fa", renk: [37, 99, 235],
+    bulgu: kesifSube.v.sube + " şubesinde olumlu erken sinyal: RS " + kesifSube.r.rs.toFixed(2).replace(".", ",") + " ama n=" + kesifSube.r.n + " düşük — hüküm için yetersiz",
+    izleme: "kontrollü hacim testi değerlendir" });
   if (kb.kesif.length) {
     const k = kb.kesif[0];
     M.push({ etiket: "keşif adayı", css: "#60a5fa", renk: [37, 99, 235],

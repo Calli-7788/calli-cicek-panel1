@@ -459,9 +459,23 @@ function generateYoneticiPDF() {
   // ── 3) Ürün × Şube dbn Heatmap ──
   if (y > H - 160) { doc.addPage(); y = 80; }
   doc.setFont("DejaVu", "bold"); doc.setFontSize(11);
-  doc.text(pdfMetin("Ürün × Şube dbn Isı Tablosu"), 40, y + 4);
   const urunler = [...new Set(yp.d1.map(r => r.c))].map(c => ({ c, d: yp.d1.filter(r => r.c === c).reduce((s, r) => s + r.d, 0) })).sort((a, b) => b.d - a.d).map(x => x.c);
-  const subeSirali = vi.map(v => v.sube).slice(0, 8);
+  // İş 3 (Faz 1.2): hacme göre ilk 8 şube + ilk 8 dışından en fazla 2 sinyal istisnası (★)
+  const hacimSirali = vi.slice().sort((a, b) => b.demet - a.demet);
+  const ilk8 = hacimSirali.slice(0, 8).map(v => v.sube);
+  const hmN = getNYeterli(yp.gun1.length);
+  const istisnalar = hacimSirali.slice(8).filter(v => {
+    const r = yRS.sube[v.sube];
+    return r && r.n >= hmN && (r.rs >= 1.10 || r.rs <= 0.90);
+  }).slice(0, 2).map(v => v.sube);
+  const subeSirali = ilk8.concat(istisnalar);
+  const istisnaSet = new Set(istisnalar);
+  doc.text(pdfMetin("Ürün × Şube dbn Isı Tablosu"), 40, y + 4);
+  doc.setFont("DejaVu", "normal"); doc.setFontSize(7);
+  doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
+  doc.text(pdfMetin("hacim ilk " + ilk8.length + (istisnalar.length ? " + " + istisnalar.length + " istisna (★ sinyal etiketli)" : "")), 40, y + 14);
+  doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+  y += 10;
   const hmMeta = [];
   const hmRows = urunler.map(c => {
     const satirVals = [];
@@ -477,8 +491,9 @@ function generateYoneticiPDF() {
     hmMeta.push(satirVals.map(v => v === null ? null : { n: v.n, norm: (mx > mn && v.n >= 3) ? (v.dbn - mn) / (mx - mn) : (v.n >= 3 ? 0.5 : 0) }));
     return row;
   });
-  y = pdfTablo(doc, ["Ürün"].concat(subeSirali), hmRows, {
+  y = pdfTablo(doc, ["Ürün"].concat(subeSirali.map(s => (istisnaSet.has(s) ? "★ " : "") + s)), hmRows, {
     startY: y + 10, kucuk: true,
+    fontSize: subeSirali.length > 10 ? 6 : undefined,   // >10 sütun → yazı bir kademe küçük
     columnStyles: (function(){ const cs = { 0: { cellWidth: 86 } }; for (let i = 1; i <= subeSirali.length; i++) cs[i] = { halign: "center" }; return cs; })(),
     didParseCell: function(data) {
       if (data.section !== "body" || data.column.index === 0) return;
@@ -491,7 +506,7 @@ function generateYoneticiPDF() {
   }) + 6;
   doc.setFont("DejaVu", "normal"); doc.setFontSize(7);
   doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
-  doc.text(pdfMetin("Renk: satır bazında min–max normalize dbn (koyu yeşil = o ürünün en iyi şubesi) · alt satır: demet · n<3 gri" + (vi.length > 8 ? " · ilk 8 şube gösterildi" : "")), 40, y + 2);
+  doc.text(pdfMetin("Renk: satır bazında min–max normalize dbn (koyu yeşil = o ürünün en iyi şubesi) · alt satır: demet · n<3 gri" + (vi.length > subeSirali.length ? " · kalan şubeler Şube Tablosu'nda tam listeli" : "")), 40, y + 2);
   y += 10;
   // İş 5: Ürün×şube otomatik bulgular — heatmap "hangi ürün hangi şubeyle iyi?" cevabı
   const kb = getKomboBulgulari(Object.values(komboM), yRS.kombo, yp.gun1);
@@ -552,7 +567,7 @@ function generateYoneticiPDF() {
   if (y > H - 130) { doc.addPage(); y = 80; }
   doc.setFont("DejaVu", "bold"); doc.setFontSize(11);
   doc.text(pdfMetin("Brüt Fiyat Fırsatı"), 40, y + 4);
-  const fir = getBrutFiyatFirsati(yp.d1, yp.oncesi);
+  const fir = getBrutFiyatFirsati(yp.d1);
   doc.setFont("DejaVu", "bold"); doc.setFontSize(9.5);
   doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
   doc.text(pdfMetin("Teorik: " + fmt(fir.teorik) + " (üst sınır)"), 40, y + 18);

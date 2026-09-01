@@ -2679,8 +2679,8 @@ function render() {
         }
 
         // Fırsat çift değeri
-        if (yp.oncesi) {
-          const fir = getBrutFiyatFirsati(yp.d1, yp.oncesi);
+        if (yp.gun1.length) {
+          const fir = getBrutFiyatFirsati(yp.d1);
           html += `<div style="display:flex;gap:6px;margin-bottom:8px">`;
           html += `<div style="flex:1;padding:7px 9px;border-radius:8px;background:rgba(255,255,255,0.03)"><div style="font-size:7px;color:#64748b">FIRSAT — TEORİK (üst sınır)</div><div style="font-size:12px;font-weight:800;color:#94a3b8">${fmt(fir.teorik)}</div></div>`;
           html += `<div style="flex:1;padding:7px 9px;border-radius:8px;background:rgba(34,197,94,0.06);border:1px solid rgba(34,197,94,0.15)"><div style="font-size:7px;color:#64748b">FIRSAT — KAPASİTE AYARLI</div><div style="font-size:12px;font-weight:800;color:#4ade80">${fmt(fir.ayarli)}</div></div>`;
