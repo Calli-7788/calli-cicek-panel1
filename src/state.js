@@ -46,7 +46,8 @@ window.state = {
   btDuyarKosuyor: false, // Duyarlılık analizi buton kilidi
   raporTur: "gunluk",  // Rapor tür seçici
   raporTurNot: null,   // Gri karta tıklanınca gösterilen "hangi fazda" notu
-  yonMezatN: 10        // Yönetici Analiz penceresi: son 5/10/20 mezat
+  yonMezatN: 10,       // Yönetici Analiz penceresi: son 5/10/20 mezat
+  trendPdfKosuyor: false // Trend & Piyasa PDF üretimi sırasında buton kilidi (6-9 async grafik)
 };
 
 function setState(updates) {

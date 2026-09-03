@@ -630,3 +630,257 @@ function generateYoneticiPDF() {
 
   pdfOnizlemeAc(doc, pdfDosyaAdi("yonetici"));
 }
+
+// ═══════════════ 📈 TREND & PİYASA PDF (Rapor Faz 2) ═══════════════
+// YENİ HESAP YOK — tüm metrikler getMezatSerisi'nden (fonksiyona DOKUNULMADI, yalnız çağrılır).
+// Grafikler OFFSCREEN: buildMezatChart string modda (visOverride ile sabit katman seti),
+// DOMParser ile elemana çevrilip svgToPng(scale=2) → PDF addImage. Ekran render'ı DEĞİŞMEDİ.
+
+// Birleşik "evren" serisi: getMezatSerisi'ni değiştirmeden yeniden kullanmak için
+// filtreli satırlar tek sentetik ürün adına maskelenir ve ALL_DATA senkron olarak
+// geçici değiştirilir (finally ile garantili geri konur — await yok, yarış yok).
+function trendEvrenSeri(sube, sonN) {
+  const filtre = r =>
+    (!state.sf || (state.sf.startsWith("GRUP:") ? r.c.startsWith(state.sf.replace("GRUP:", "")) : r.c === state.sf)) &&
+    (!state.sb || r.s === state.sb);
+  const maskeli = ALL_DATA.filter(filtre).map(r => ({ t: r.t, c: "__EVREN__", s: r.s, d: r.d, net: r.net, costModel: r.costModel }));
+  // UYARI: SENKRON KALMALI — bu blok içine await/async eklenemez, aksi halde tüm analizler bozulur
+  // (ALL_DATA swap sırasında başka bir kod çalışırsa maskelenmiş veriyi okur).
+  const yedek = window.ALL_DATA;
+  window.ALL_DATA = maskeli;
+  try {
+    return getMezatSerisi("__EVREN__", sube || null, sonN || 30);
+  } finally {
+    window.ALL_DATA = yedek;
+  }
+}
+
+// Trend rapor evreni: filtreli son 30 mezat günü + ürün demet dağılımı
+function getTrendEvren() {
+  const filtre = r =>
+    (!state.sf || (state.sf.startsWith("GRUP:") ? r.c.startsWith(state.sf.replace("GRUP:", "")) : r.c === state.sf)) &&
+    (!state.sb || r.s === state.sb);
+  const rows = ALL_DATA.filter(filtre);
+  const gunler = [...new Set(rows.map(r => r.t))].sort().slice(-30);
+  const gunSet = new Set(gunler);
+  const pencere = rows.filter(r => gunSet.has(r.t));
+  const urunD = {};
+  pencere.forEach(r => { urunD[r.c] = (urunD[r.c] || 0) + r.d; });
+  const siralı = Object.entries(urunD).map(([c, d]) => ({ c, d })).sort((a, b) => b.d - a.d);
+  const toplamD = siralı.reduce((s, u) => s + u.d, 0);
+  // Kilitli karar #6: hacim %80 kapsamı
+  const liderler = [];
+  let kumul = 0;
+  for (const u of siralı) {
+    liderler.push(u.c);
+    kumul += u.d;
+    if (toplamD > 0 && kumul / toplamD >= 0.80) break;
+  }
+  return { gunler, toplamD, siralı, liderler, kapsamPct: toplamD > 0 ? kumul / toplamD * 100 : 0 };
+}
+
+// Metrik şeridi değerleri (null → "—", asla 0 yazılmaz; fan "kısa seri" ekleri aynen)
+function trendMetrikSatiri(ms) {
+  const son = ms.n > 0 ? ms.seri[ms.n - 1] : null;
+  return [
+    son ? fmt(son.dbn) + "/dm" : "—",
+    ms.slope === null ? "—" : (ms.slope >= 0 ? "+" : "") + new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 1 }).format(ms.slope) + " ₺/mezat" + (ms.slopeKisa ? " (kısa)" : ""),
+    ms.roc3 === null ? "—" : (ms.roc3 >= 0 ? "+" : "−") + "%" + Math.abs(ms.roc3).toFixed(0) + (ms.roc3Uyari ? " ⚠" : ""),
+    ms.cv === null ? "—" : "%" + ms.cv.toFixed(0) + (ms.cvKisa ? " (kısa)" : ""),
+    ms.fan || "—"
+  ];
+}
+
+// SVG string → PNG dataURL (DOM'a eklemeden — offscreen).
+// Ekran SVG'si innerHTML ile gömüldüğünden xmlns taşımaz; Image yüklemesi için burada eklenir
+// (buildMezatChart'a DOKUNULMADI — ekran çıktısı birebir aynı).
+function trendSvgStringToPng(svgString, scale) {
+  if (svgString.indexOf("xmlns=") < 0) svgString = svgString.replace("<svg ", '<svg xmlns="http://www.w3.org/2000/svg" ');
+  const el = new DOMParser().parseFromString(svgString, "image/svg+xml").documentElement;
+  // JPEG kalite 0.85: dosya boyutu için (zemin svgToPng'de zaten beyaz doldurulur)
+  return svgToPng(el, scale || 2, "image/jpeg", 0.85);
+}
+
+// Volatilite × Fiyat scatter — basit SVG string (eksen + ızgara + hacim-orantılı noktalar)
+function buildScatterSVG(noktalar) {
+  const W = 360, H = 230, L = 42, R = 10, T = 14, B = 30;
+  const cw = W - L - R, ch = H - T - B;
+  const xs = noktalar.map(p => p.cv), ys = noktalar.map(p => p.dbn), ds = noktalar.map(p => p.d);
+  const xMax = Math.max(...xs) * 1.12 || 1;
+  const yMax = Math.max(...ys) * 1.12 || 1;
+  const dMax = Math.max(...ds) || 1;
+  const X = v => L + (v / xMax) * cw;
+  const Y = v => T + ch - (v / yMax) * ch;
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}">`;
+  svg += `<rect x="0" y="0" width="${W}" height="${H}" fill="#ffffff"/>`;
+  // Izgara + eksen etiketleri
+  for (let i = 0; i <= 4; i++) {
+    const gx = L + (cw * i) / 4, gy = T + (ch * i) / 4;
+    svg += `<line x1="${gx}" y1="${T}" x2="${gx}" y2="${T + ch}" stroke="#e5e7eb" stroke-width="0.6"/>`;
+    svg += `<line x1="${L}" y1="${gy}" x2="${L + cw}" y2="${gy}" stroke="#e5e7eb" stroke-width="0.6"/>`;
+    svg += `<text x="${gx}" y="${H - 14}" text-anchor="middle" font-size="7" fill="#6b7280">${(xMax * i / 4).toFixed(0)}</text>`;
+    svg += `<text x="${L - 4}" y="${T + ch - (ch * i) / 4 + 2.5}" text-anchor="end" font-size="7" fill="#6b7280">${(yMax * i / 4).toFixed(0)}</text>`;
+  }
+  svg += `<text x="${L + cw / 2}" y="${H - 3}" text-anchor="middle" font-size="7.5" fill="#374151">CV10 (%) — oynaklık</text>`;
+  svg += `<text x="10" y="${T + ch / 2}" text-anchor="middle" font-size="7.5" fill="#374151" transform="rotate(-90 10 ${T + ch / 2})">Ort dbn (₺)</text>`;
+  // Noktalar (yarıçap = demet hacmine orantılı) + kısaltılmış etiket
+  noktalar.forEach(p => {
+    const r = 3 + Math.sqrt(p.d / dMax) * 9;
+    svg += `<circle cx="${X(p.cv).toFixed(1)}" cy="${Y(p.dbn).toFixed(1)}" r="${r.toFixed(1)}" fill="rgba(34,120,74,0.35)" stroke="#22784a" stroke-width="1"/>`;
+    svg += `<text x="${X(p.cv).toFixed(1)}" y="${(Y(p.dbn) - r - 2).toFixed(1)}" text-anchor="middle" font-size="6.5" fill="#111827">${p.ad}</text>`;
+  });
+  svg += `</svg>`;
+  return svg;
+}
+
+const TREND_RAPOR_KATMANLAR = { fiyat: true, ewmaFast: true, ewmaMid: true, sma5: true, sma3: false, sma10: false, sma20: false };
+
+async function generateTrendPDF() {
+  if (!pdfHazirMi()) { alert("PDF kütüphanesi yüklenemedi."); return; }
+  if (state.trendPdfKosuyor) return;
+  state.trendPdfKosuyor = true;
+  render();
+  const t0 = Date.now();
+  try {
+    const ev = getTrendEvren();
+    if (ev.gunler.length === 0) { alert("Bu filtreyle mezat verisi yok."); return; }
+    const filtreEtiket = state.sf ? state.sf.replace("GRUP:", "") + (state.sf.startsWith("GRUP:") ? " (Grup)" : "") : (state.sb ? state.sb : null);
+    const doc = pdfBaslat("Çallı Çiçek — Trend & Piyasa Raporu",
+      "Son " + ev.gunler.length + " mezat: " + fD(ev.gunler[0]) + " – " + fD(ev.gunler[ev.gunler.length - 1]) + (filtreEtiket ? "   |   Filtre: " + filtreEtiket : ""));
+    const W = doc.internal.pageSize.getWidth();
+    const H = doc.internal.pageSize.getHeight();
+    let y = 82;
+    const grafW = W - 80;
+    const grafH = grafW * (158 / 360);   // viewBox oranı korunur (buildMezatChart H = 118+26+14 = 158)
+
+    const serit = (baslikStr, ms) => {
+      const v = trendMetrikSatiri(ms);
+      doc.setFont("DejaVu", "bold"); doc.setFontSize(9);
+      doc.text(pdfMetin(baslikStr), 40, y + 4);
+      doc.setFont("DejaVu", "normal"); doc.setFontSize(7.5);
+      doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
+      doc.text(pdfMetin("Son: " + v[0] + "   ·   Eğim: " + v[1] + "   ·   ROC3: " + v[2] + "   ·   CV: " + v[3] + "   ·   Yapı: " + v[4]), 40, y + 15);
+      doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+      y += 22;
+    };
+    const grafikEkle = async (ms) => {
+      const png = await trendSvgStringToPng(buildMezatChart(ms, TREND_RAPOR_KATMANLAR), 2);
+      if (y + grafH > H - 50) { doc.addPage(); y = 80; }
+      doc.addImage(png, "JPEG", 40, y, grafW, grafH);
+      y += grafH + 8;
+      if (ms.seri.some(p => !p.v2)) {
+        doc.setFontSize(6.5); doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
+        doc.text(pdfMetin("31 Tem öncesi noktalar tahmini %20 net modeliyle (içi boş)"), 40, y);
+        doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+        y += 10;
+      }
+    };
+
+    // ── 1) Piyasa Özeti (birleşik seri) ──
+    doc.setFont("DejaVu", "bold"); doc.setFontSize(12);
+    doc.text(pdfMetin("Piyasa Özeti"), 40, y); y += 10;
+    const evrenMs = trendEvrenSeri(null, 30);
+    serit("Tüm evren (filtre dahilinde)", evrenMs);
+    await grafikEkle(evrenMs);
+
+    // ── 2) Lider Ürünler (%80 hacim kapsamı) ──
+    if (y > H - 120) { doc.addPage(); y = 80; }
+    doc.setFont("DejaVu", "bold"); doc.setFontSize(12);
+    doc.text(pdfMetin("Lider Ürünler — hacim %80 kapsamı (" + ev.liderler.length + " ürün, kapsam %" + ev.kapsamPct.toFixed(0) + ")"), 40, y); y += 10;
+    for (const c of ev.liderler) {
+      const ms = getMezatSerisi(c, state.sb || null, 30);
+      if (y + 30 > H - 50) { doc.addPage(); y = 80; }
+      serit(c + "  (" + (ev.siralı.find(u => u.c === c) || {}).d + " dm)", ms);
+      if (ms.n < 5) {
+        doc.setFontSize(7.5); doc.setTextColor(202, 138, 4);
+        doc.text(pdfMetin("Yetersiz mezat verisi (n=" + ms.n + ") — grafik atlandı"), 40, y); y += 12;
+        doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+      } else {
+        await grafikEkle(ms);
+      }
+      y += 4;
+    }
+
+    // ── 3) ⚡ Önemli Fiyat Hareketleri (kilitli #6: kapsam dışı, n≥6, |son3/ilk3 − 1| top 3) ──
+    if (y > H - 130) { doc.addPage(); y = 80; }
+    doc.setFont("DejaVu", "bold"); doc.setFontSize(12);
+    doc.text(pdfMetin("⚡ Önemli Fiyat Hareketleri"), 40, y); y += 6;
+    const liderSet = new Set(ev.liderler);
+    const hareketler = ev.siralı.filter(u => !liderSet.has(u.c)).map(u => {
+      const ms = getMezatSerisi(u.c, state.sb || null, 30);
+      if (ms.n < 6) return null;
+      const ilk3 = ms.seri.slice(0, 3), son3 = ms.seri.slice(-3);
+      const ilkOrt = ilk3.reduce((s, p) => s + p.dbn, 0) / 3;
+      const sonOrt = son3.reduce((s, p) => s + p.dbn, 0) / 3;
+      if (ilkOrt <= 0) return null;
+      return { c: u.c, n: ms.n, degisim: (sonOrt / ilkOrt - 1) * 100, sonDbn: ms.seri[ms.n - 1].dbn, d: u.d };
+    }).filter(Boolean).sort((a, b) => Math.abs(b.degisim) - Math.abs(a.degisim)).slice(0, 3);
+    if (hareketler.length === 0) {
+      doc.setFont("DejaVu", "normal"); doc.setFontSize(8);
+      doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
+      doc.text(pdfMetin("Kapsam dışında n≥6 ürün yok."), 40, y + 8); y += 18;
+      doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+    } else {
+      y = pdfTablo(doc, ["Ürün", "n", "Değişim (son3/ilk3)", "Son dbn", "Demet"],
+        hareketler.map(h => [h.c, String(h.n), (h.degisim >= 0 ? "+" : "−") + "%" + Math.abs(h.degisim).toFixed(0), fmt(h.sonDbn), String(h.d)]),
+        { startY: y + 6, kucuk: true, columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" } },
+          didParseCell: function(data) {
+            if (data.section === "body" && data.column.index === 2) {
+              data.cell.styles.textColor = String(data.cell.raw).indexOf("+") === 0 ? [22, 120, 74] : [220, 38, 38];
+            }
+          } }) + 10;
+    }
+
+    // ── 4) Ana 3 Şube Kırılımı (metrik şeritleri — grafiksiz) ──
+    if (y > H - 120) { doc.addPage(); y = 80; }
+    doc.setFont("DejaVu", "bold"); doc.setFontSize(12);
+    doc.text(pdfMetin("Ana 3 Şube Kırılımı"), 40, y); y += 6;
+    const gunSet2 = new Set(ev.gunler);
+    const filtre2 = r =>
+      (!state.sf || (state.sf.startsWith("GRUP:") ? r.c.startsWith(state.sf.replace("GRUP:", "")) : r.c === state.sf)) &&
+      (!state.sb || r.s === state.sb);
+    const pencereRows = ALL_DATA.filter(r => gunSet2.has(r.t) && filtre2(r));
+    const subeAgg = {};
+    pencereRows.forEach(r => { if (!subeAgg[r.s]) subeAgg[r.s] = { net: 0, d: 0 }; subeAgg[r.s].net += r.net; subeAgg[r.s].d += r.d; });
+    const toplamNet2 = Object.values(subeAgg).reduce((s, v) => s + v.net, 0);
+    const ilk3Sube = Object.entries(subeAgg).sort((a, b) => b[1].net - a[1].net).slice(0, 3);
+    const subeSatirlar = ilk3Sube.map(([s, v]) => {
+      const ms = trendEvrenSeri(s, 30);
+      const m = trendMetrikSatiri(ms);
+      return [s, fmt(v.net), String(v.d), toplamNet2 > 0 ? "%" + (v.net / toplamNet2 * 100).toFixed(0) : "—", m[0], m[1], m[2], m[3], m[4]];
+    });
+    y = pdfTablo(doc, ["Şube", "Net", "Demet", "Pay", "Son dbn", "Eğim", "ROC3", "CV", "Yapı"], subeSatirlar,
+      { startY: y + 6, kucuk: true, fontSize: 6.5, columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right" }, 7: { halign: "right" } } }) + 10;
+
+    // ── 5) Volatilite × Fiyat Haritası (scatter, n≥6) ──
+    const scatterNoktalar = ev.siralı.map(u => {
+      const ms = getMezatSerisi(u.c, state.sb || null, 30);
+      if (ms.n < 6 || ms.cv === null) return null;
+      const ortDbn = ms.seri.reduce((s, p) => s + p.dbn * p.d, 0) / ms.seri.reduce((s, p) => s + p.d, 0);
+      const ad = u.c.length > 14 ? u.c.split(" ").map(w => w.substring(0, 4)).join(".") : u.c;
+      return { ad, cv: ms.cv, dbn: ortDbn, d: u.d };
+    }).filter(Boolean);
+    if (scatterNoktalar.length >= 2) {
+      const scH = grafW * (230 / 360);
+      if (y + scH + 40 > H - 50) { doc.addPage(); y = 80; }
+      doc.setFont("DejaVu", "bold"); doc.setFontSize(12);
+      doc.text(pdfMetin("Volatilite × Fiyat Haritası"), 40, y); y += 8;
+      const scPng = await trendSvgStringToPng(buildScatterSVG(scatterNoktalar), 2);
+      doc.addImage(scPng, "JPEG", 40, y, grafW, scH);
+      y += scH + 8;
+      doc.setFont("DejaVu", "normal"); doc.setFontSize(7);
+      doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
+      doc.text(doc.splitTextToSize(pdfMetin("Okuma: sağ üst = pahalı ve oynak (fırsat/risk), sol üst = pahalı ve istikrarlı (çekirdek gelir). Nokta büyüklüğü = demet hacmi. n≥6 ürünler."), W - 80), 40, y);
+      doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+    }
+
+    window.__trendPdfSure = Date.now() - t0;
+    pdfOnizlemeAc(doc, pdfDosyaAdi("trend"));
+  } catch (e) {
+    console.error("Trend PDF hatası:", e);
+    alert("Trend PDF hatası: " + e.message);
+  } finally {
+    state.trendPdfKosuyor = false;
+    render();
+  }
+}

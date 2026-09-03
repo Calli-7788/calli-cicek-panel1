@@ -86,8 +86,10 @@ function pdfTablo(doc, kolonlar, satirlar, opts) {
   return doc.lastAutoTable.finalY;
 }
 
-// SVG → PNG dataURL (A4 baskı netliği için ≥2× ölçek)
-function svgToPng(svgElement, scale) {
+// SVG → raster dataURL (A4 baskı netliği için ≥2× ölçek).
+// format/quality opsiyonel (varsayılan PNG — mevcut çağrılar değişmez);
+// "image/jpeg" + kalite ile dosya boyutu küçültülebilir (zemin zaten beyaz doldurulur).
+function svgToPng(svgElement, scale, format, quality) {
   scale = scale || 2;
   return new Promise(function(resolve, reject) {
     try {
@@ -107,7 +109,7 @@ function svgToPng(svgElement, scale) {
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         URL.revokeObjectURL(url);
-        resolve(canvas.toDataURL("image/png"));
+        resolve(canvas.toDataURL(format || "image/png", quality));
       };
       img.onerror = function(e) { URL.revokeObjectURL(url); reject(e); };
       img.src = url;

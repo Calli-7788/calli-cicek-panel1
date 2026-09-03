@@ -5,8 +5,10 @@ function mezatLegendToggle(key) {
   render();
 }
 
-function buildMezatChart(ms) {
-  const vis = state.mezatLegend;
+function buildMezatChart(ms, visOverride) {
+  // visOverride (Rapor Faz 2): offscreen üretim için sabit katman seti — DOM/state'e bağımsız.
+  // Ekran çağrısı tek argümanla DEĞİŞMEDİ: state.mezatLegend aynen kullanılır.
+  const vis = visOverride || state.mezatLegend || { fiyat: true, ewmaFast: true, ewmaMid: true, sma5: true, sma3: false, sma10: false, sma20: false };
   const n = ms.n;
   const W = 360, PXL = 34, PXR = 8, PY = 8;
   const HP = 118;                 // fiyat alanı
@@ -2597,7 +2599,7 @@ function render() {
     const raporTurleri = [
       { id: "gunluk", ad: "📄 Günlük Operasyon", aktif: true },
       { id: "yonetici", ad: "📊 Yönetici Analiz", aktif: true },
-      { id: "trend", ad: "📈 Trend & Piyasa", aktif: false, faz: "Faz 2" },
+      { id: "trend", ad: "📈 Trend & Piyasa", aktif: true },
       { id: "sevkiyat", ad: "🎯 Sevkiyat & Karar", aktif: false, faz: "Faz 3" },
       { id: "aylik", ad: "🏛 Aylık Patron", aktif: false, faz: "Faz 4" }
     ];
@@ -2710,6 +2712,38 @@ function render() {
       html += `</div>`;
       const yPdfOk = pdfHazirMi() && yp.gun1.length > 0;
       html += `<button onclick="generateYoneticiPDF()" ${yPdfOk ? '' : 'disabled'} style="width:100%;padding:14px;border-radius:12px;border:none;cursor:${yPdfOk ? 'pointer' : 'not-allowed'};font-size:14px;font-weight:600;background:${yPdfOk ? 'linear-gradient(135deg,#7c3aed,#6d28d9)' : 'rgba(255,255,255,0.06)'};color:${yPdfOk ? '#fff' : '#475569'};margin-bottom:10px">📊 Yönetici Analiz PDF Oluştur</button>`;
+    } else if (state.raporTur === "trend") {
+      // ══ 📈 TREND & PİYASA önizlemesi (kompakt — grafikler PDF'te) ══
+      const tev = getTrendEvren();
+      const tFiltre = state.sf ? state.sf.replace("GRUP:", "") + (state.sf.startsWith("GRUP:") ? " (Grup)" : "") : (state.sb ? state.sb : null);
+      html += `<div class="card" style="margin-bottom:14px;background:rgba(255,255,255,0.04)">`;
+      html += `<div style="font-size:14px;font-weight:700;color:#f8fafc;margin-bottom:4px">📈 Trend & Piyasa Önizleme</div>`;
+      html += `<div style="font-size:10px;color:#64748b;margin-bottom:10px">Son ${tev.gunler.length} mezat${tev.gunler.length ? ": " + fD(tev.gunler[0]) + " – " + fD(tev.gunler[tev.gunler.length - 1]) : ""}${tFiltre ? ' · <span style="color:#fbbf24">Filtre: ' + esc(tFiltre) + '</span>' : ''} · üst tarih filtresinden bağımsız</div>`;
+      if (tev.gunler.length === 0) {
+        html += `<div style="font-size:12px;color:#fbbf24;text-align:center;padding:16px">Bu filtreyle mezat verisi yok.</div>`;
+      } else {
+        // ① Piyasa özet şeridi
+        const tEvrenMs = trendEvrenSeri(null, 30);
+        const tv = trendMetrikSatiri(tEvrenMs);
+        html += `<div style="padding:8px 10px;border-radius:8px;background:rgba(34,197,94,0.06);border:1px solid rgba(34,197,94,0.15);margin-bottom:10px">`;
+        html += `<div style="font-size:10px;font-weight:700;color:#4ade80;margin-bottom:4px">Piyasa Özeti (tüm evren)</div>`;
+        html += `<div style="font-size:10px;color:#e2e8f0">Son: <strong>${esc(tv[0])}</strong> · Eğim: ${esc(tv[1])} · ROC3: ${esc(tv[2])} · CV: ${esc(tv[3])} · Yapı: <span style="color:${tEvrenMs.fan && tEvrenMs.fan.includes("yükseliş") ? "#34d399" : tEvrenMs.fan && tEvrenMs.fan.includes("düşüş") ? "#f87171" : "#94a3b8"}">${esc(tv[4])}</span></div>`;
+        html += `</div>`;
+        // ② Lider ürün listesi (grafiksiz, metrik şeritleriyle)
+        html += `<div style="font-size:10px;font-weight:700;color:#94a3b8;margin-bottom:4px">Lider Ürünler — hacim %80 kapsamı (${tev.liderler.length} ürün, %${tev.kapsamPct.toFixed(0)})</div>`;
+        tev.liderler.forEach(c => {
+          const ms = getMezatSerisi(c, state.sb || null, 30);
+          const v = trendMetrikSatiri(ms);
+          html += `<div style="display:flex;justify-content:space-between;gap:8px;font-size:9.5px;padding:4px 0;border-top:1px solid rgba(255,255,255,0.03)">`;
+          html += `<span style="color:#cbd5e1;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c)}</span>`;
+          html += `<span style="color:#34d399;font-weight:600">${esc(v[0])}</span><span style="color:#94a3b8">${esc(v[2])}</span><span style="color:#64748b">${esc(v[4])}</span>`;
+          html += `</div>`;
+        });
+        html += `<div style="font-size:9px;color:#475569;margin-top:8px">PDF'te grafikli tam detay: piyasa grafiği, ürün grafikleri (EWMA/SMA5/hacim/outlier), önemli-3 hareket, şube şeritleri, volatilite×fiyat haritası.</div>`;
+      }
+      html += `</div>`;
+      const tPdfOk = pdfHazirMi() && tev.gunler.length > 0 && !state.trendPdfKosuyor;
+      html += `<button onclick="generateTrendPDF()" ${tPdfOk ? '' : 'disabled'} style="width:100%;padding:14px;border-radius:12px;border:none;cursor:${tPdfOk ? 'pointer' : (state.trendPdfKosuyor ? 'wait' : 'not-allowed')};font-size:14px;font-weight:600;background:${tPdfOk ? 'linear-gradient(135deg,#0ea5e9,#0369a1)' : 'rgba(255,255,255,0.06)'};color:${tPdfOk ? '#fff' : '#475569'};margin-bottom:10px">${state.trendPdfKosuyor ? '⏳ Hazırlanıyor… (grafikler çiziliyor)' : '📈 Trend & Piyasa PDF Oluştur'}</button>`;
     } else {
 
     // Report preview
