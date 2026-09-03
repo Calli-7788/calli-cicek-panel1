@@ -631,36 +631,50 @@ function generateYoneticiPDF() {
   pdfOnizlemeAc(doc, pdfDosyaAdi("yonetici"));
 }
 
-// ═══════════════ 📈 TREND & PİYASA PDF (Rapor Faz 2) ═══════════════
-// YENİ HESAP YOK — tüm metrikler getMezatSerisi'nden (fonksiyona DOKUNULMADI, yalnız çağrılır).
-// Grafikler OFFSCREEN: buildMezatChart string modda (visOverride ile sabit katman seti),
-// DOMParser ile elemana çevrilip svgToPng(scale=2) → PDF addImage. Ekran render'ı DEĞİŞMEDİ.
+// ═══════════════ 📈 TREND & PİYASA PDF (Rapor Faz 2 + 2.1 rejim revizyonu) ═══════════════
+// YENİ HESAP YOK — metrikler getMezatSerisi'nden; rejim getRejim (YALNIZ rapor katmanı,
+// Planlayıcı'ya BAĞLANMAZ). 120 GÜN ORTAK KURAL: getGuncellikSiniri() (Faz 1.3 yardımcısı)
+// pencere kurulumunda aynen kullanılır — Çiçek Analiz ekran grafiğine DOKUNULMAZ.
+// v1 NOTU: 31 Tem öncesi tahmini-net noktalar görselde soluk gösterilir VE slope/ROC/SMA/EWMA
+// hesaplarına DAHİLDİR (seri bütünlüğü); zaman geçtikçe 120 gün penceresinden doğal çıkarlar.
 
-// Birleşik "evren" serisi: getMezatSerisi'ni değiştirmeden yeniden kullanmak için
-// filtreli satırlar tek sentetik ürün adına maskelenir ve ALL_DATA senkron olarak
-// geçici değiştirilir (finally ile garantili geri konur — await yok, yarış yok).
-function trendEvrenSeri(sube, sonN) {
-  const filtre = r =>
-    (!state.sf || (state.sf.startsWith("GRUP:") ? r.c.startsWith(state.sf.replace("GRUP:", "")) : r.c === state.sf)) &&
-    (!state.sb || r.s === state.sb);
-  const maskeli = ALL_DATA.filter(filtre).map(r => ({ t: r.t, c: "__EVREN__", s: r.s, d: r.d, net: r.net, costModel: r.costModel }));
-  // UYARI: SENKRON KALMALI — bu blok içine await/async eklenemez, aksi halde tüm analizler bozulur
-  // (ALL_DATA swap sırasında başka bir kod çalışırsa maskelenmiş veriyi okur).
+// Maskeli seri üretimi: getMezatSerisi'ni DEĞİŞTİRMEDEN 120-gün sınırlı/birleşik seriler.
+// UYARI: SENKRON KALMALI — bu blok içine await/async eklenemez, aksi halde tüm analizler bozulur
+// (ALL_DATA swap sırasında başka bir kod çalışırsa maskelenmiş veriyi okur).
+function trendMaskeliSeri(rows, cicekAdi, sube, sonN) {
   const yedek = window.ALL_DATA;
-  window.ALL_DATA = maskeli;
+  window.ALL_DATA = rows;
   try {
-    return getMezatSerisi("__EVREN__", sube || null, sonN || 30);
+    return getMezatSerisi(cicekAdi, sube || null, sonN || 30);
   } finally {
     window.ALL_DATA = yedek;
   }
 }
 
-// Trend rapor evreni: filtreli son 30 mezat günü + ürün demet dağılımı
+// Birleşik "evren" serisi (filtre dahilinde, 120 gün içi)
+function trendEvrenSeri(sube, sonN) {
+  const filtre = r =>
+    (!state.sf || (state.sf.startsWith("GRUP:") ? r.c.startsWith(state.sf.replace("GRUP:", "")) : r.c === state.sf)) &&
+    (!state.sb || r.s === state.sb);
+  const minTarih = getGuncellikSiniri();
+  const maskeli = ALL_DATA.filter(r => r.t >= minTarih && filtre(r)).map(r => ({ t: r.t, c: "__EVREN__", s: r.s, d: r.d, net: r.net, costModel: r.costModel }));
+  return trendMaskeliSeri(maskeli, "__EVREN__", sube, sonN);
+}
+
+// Ürün serisi (120 gün sınırlı — ekran grafiği bundan ETKİLENMEZ, kendi yolunu kullanır)
+function trendUrunSeri(cicek, sube, sonN) {
+  const minTarih = getGuncellikSiniri();
+  const kirpik = ALL_DATA.filter(r => r.t >= minTarih);
+  return trendMaskeliSeri(kirpik, cicek, sube, sonN);
+}
+
+// Trend rapor evreni: 120 gün içi filtreli son 30 mezat günü + ürün demet dağılımı
 function getTrendEvren() {
   const filtre = r =>
     (!state.sf || (state.sf.startsWith("GRUP:") ? r.c.startsWith(state.sf.replace("GRUP:", "")) : r.c === state.sf)) &&
     (!state.sb || r.s === state.sb);
-  const rows = ALL_DATA.filter(filtre);
+  const minTarih = getGuncellikSiniri();
+  const rows = ALL_DATA.filter(r => r.t >= minTarih && filtre(r));
   const gunler = [...new Set(rows.map(r => r.t))].sort().slice(-30);
   const gunSet = new Set(gunler);
   const pencere = rows.filter(r => gunSet.has(r.t));
@@ -668,7 +682,6 @@ function getTrendEvren() {
   pencere.forEach(r => { urunD[r.c] = (urunD[r.c] || 0) + r.d; });
   const siralı = Object.entries(urunD).map(([c, d]) => ({ c, d })).sort((a, b) => b.d - a.d);
   const toplamD = siralı.reduce((s, u) => s + u.d, 0);
-  // Kilitli karar #6: hacim %80 kapsamı
   const liderler = [];
   let kumul = 0;
   for (const u of siralı) {
@@ -676,10 +689,10 @@ function getTrendEvren() {
     kumul += u.d;
     if (toplamD > 0 && kumul / toplamD >= 0.80) break;
   }
-  return { gunler, toplamD, siralı, liderler, kapsamPct: toplamD > 0 ? kumul / toplamD * 100 : 0 };
+  return { gunler, toplamD, siralı, liderler, kapsamPct: toplamD > 0 ? kumul / toplamD * 100 : 0, kisitli: gunler.length < 30, pencereRows: pencere };
 }
 
-// Metrik şeridi değerleri (null → "—", asla 0 yazılmaz; fan "kısa seri" ekleri aynen)
+// Teknik metrik şeridi (küçük gri satır — üst katman rejim dilidir)
 function trendMetrikSatiri(ms) {
   const son = ms.n > 0 ? ms.seri[ms.n - 1] : null;
   return [
@@ -691,17 +704,74 @@ function trendMetrikSatiri(ms) {
   ];
 }
 
-// SVG string → PNG dataURL (DOM'a eklemeden — offscreen).
-// Ekran SVG'si innerHTML ile gömüldüğünden xmlns taşımaz; Image yüklemesi için burada eklenir
-// (buildMezatChart'a DOKUNULMADI — ekran çıktısı birebir aynı).
+// Kırılma/dönüş rejimlerinde kısa neden eki
+function trendNedenEki(rj, ms) {
+  if (!rj || !rj.rejim) return "";
+  if (rj.rejim === "Yukarı kırılma adayı") return " (yatay seyirde momentum +%" + Math.abs(ms.roc3).toFixed(0) + ")";
+  if (rj.rejim === "Aşağı kırılma riski") return " (yatay seyirde momentum −%" + Math.abs(ms.roc3).toFixed(0) + ")";
+  if (rj.rejim.indexOf("zayıflıyor / dönüş") >= 0) return " (eğim + iken momentum −)";
+  if (rj.rejim.indexOf("Toparlanma") >= 0) return " (eğim − iken momentum +)";
+  return "";
+}
+
+// Bulgu cümlesi şablonu: "[Ad]: [rejim] — [oynaklık]. (eğim … · momentum … · CV … · hacim …)"
+function trendBulguCumlesi(ad, ms, rj, hacimD) {
+  const teknik = "eğim " + (ms.slope === null ? "—" : (ms.slope >= 0 ? "+" : "") + ms.slope.toFixed(1) + " ₺/mezat") +
+    " · momentum " + (ms.roc3 === null ? "—" : (ms.roc3 >= 0 ? "+" : "−") + "%" + Math.abs(ms.roc3).toFixed(0)) +
+    " · CV " + (ms.cv === null ? "—" : "%" + ms.cv.toFixed(0)) +
+    (hacimD != null ? " · hacim " + hacimD + " dm" : "");
+  return ad + ": " + rejimEtiket(rj) + trendNedenEki(rj, ms) + ". (" + teknik + ")";
+}
+
+// 🧭 Trend Yönetici Bulguları — 4-6 deterministik cümle (ürün adı hard-code YASAK)
+function getTrendBulgulari(ev) {
+  const M = [];
+  const evrenMs = trendEvrenSeri(null, 30);
+  const evrenRj = getRejim(evrenMs);
+  if (evrenRj.rejim) M.push(trendBulguCumlesi("Piyasa geneli", evrenMs, evrenRj, ev.toplamD));
+
+  // Lider ürün rejimleri — dikkat sıralı: kırılma/dönüş > güçlenen düşüş > diğer (en fazla 3)
+  const liderRjler = ev.liderler.map(c => {
+    const ms = trendUrunSeri(c, state.sb || null, 30);
+    return { c, ms, rj: getRejim(ms), d: (ev.siralı.find(u => u.c === c) || {}).d };
+  }).filter(x => x.rj.rejim);
+  const oncelik = x => x.rj.kirilmaAilesi ? 0 : (x.rj.rejim === "Güçlenen düşüş" ? 1 : 2);
+  liderRjler.slice().sort((a, b) => oncelik(a) - oncelik(b)).slice(0, 3).forEach(x => {
+    M.push(trendBulguCumlesi(x.c, x.ms, x.rj, x.d));
+  });
+
+  // En sert momentum (n≥6, |ROC3| max; yukarıda geçtiyse atla)
+  const gecenler = new Set(M.map(m => m.split(":")[0]));
+  const sert = ev.siralı.map(u => {
+    const ms = trendUrunSeri(u.c, state.sb || null, 30);
+    return ms.n >= 6 && ms.roc3 !== null ? { c: u.c, ms, rj: getRejim(ms), d: u.d } : null;
+  }).filter(Boolean).sort((a, b) => Math.abs(b.ms.roc3) - Math.abs(a.ms.roc3))[0];
+  if (sert && !gecenler.has(sert.c)) M.push(trendBulguCumlesi(sert.c, sert.ms, sert.rj, sert.d));
+
+  // İstisna şube (çelişki cümlesi): kırılma ailesi VEYA eğim-momentum zıt + |ROC3|≥20
+  const subeler = [...new Set(ev.pencereRows.map(r => r.s))];
+  const subeAday = subeler.map(s => {
+    const ms = trendEvrenSeri(s, 30);
+    const rj = getRejim(ms);
+    if (!rj.rejim || ms.roc3 === null) return null;
+    const zit = (rj.egimSinifi === "+" && rj.momentumSinifi === "-") || (rj.egimSinifi === "-" && rj.momentumSinifi === "+");
+    if (rj.kirilmaAilesi || (zit && Math.abs(ms.roc3) >= 20)) return { s, ms, rj };
+    return null;
+  }).filter(Boolean).sort((a, b) => Math.abs(b.ms.roc3) - Math.abs(a.ms.roc3))[0];
+  if (subeAday) M.push(trendBulguCumlesi(subeAday.s + " şubesi", subeAday.ms, subeAday.rj, null));
+
+  return M.slice(0, 6);
+}
+
+// SVG string → raster (JPEG 0.85 — dosya boyutu; zemin svgToPng'de beyaz doldurulur).
+// Ekran SVG'si innerHTML ile gömüldüğünden xmlns taşımaz; burada eklenir (buildMezatChart'a DOKUNULMADI).
 function trendSvgStringToPng(svgString, scale) {
   if (svgString.indexOf("xmlns=") < 0) svgString = svgString.replace("<svg ", '<svg xmlns="http://www.w3.org/2000/svg" ');
   const el = new DOMParser().parseFromString(svgString, "image/svg+xml").documentElement;
-  // JPEG kalite 0.85: dosya boyutu için (zemin svgToPng'de zaten beyaz doldurulur)
   return svgToPng(el, scale || 2, "image/jpeg", 0.85);
 }
 
-// Volatilite × Fiyat scatter — basit SVG string (eksen + ızgara + hacim-orantılı noktalar)
+// Volatilite × Fiyat scatter — balon etiketinde rejim yön oku (↑↓→)
 function buildScatterSVG(noktalar) {
   const W = 360, H = 230, L = 42, R = 10, T = 14, B = 30;
   const cw = W - L - R, ch = H - T - B;
@@ -713,7 +783,6 @@ function buildScatterSVG(noktalar) {
   const Y = v => T + ch - (v / yMax) * ch;
   let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}">`;
   svg += `<rect x="0" y="0" width="${W}" height="${H}" fill="#ffffff"/>`;
-  // Izgara + eksen etiketleri
   for (let i = 0; i <= 4; i++) {
     const gx = L + (cw * i) / 4, gy = T + (ch * i) / 4;
     svg += `<line x1="${gx}" y1="${T}" x2="${gx}" y2="${T + ch}" stroke="#e5e7eb" stroke-width="0.6"/>`;
@@ -723,11 +792,10 @@ function buildScatterSVG(noktalar) {
   }
   svg += `<text x="${L + cw / 2}" y="${H - 3}" text-anchor="middle" font-size="7.5" fill="#374151">CV10 (%) — oynaklık</text>`;
   svg += `<text x="10" y="${T + ch / 2}" text-anchor="middle" font-size="7.5" fill="#374151" transform="rotate(-90 10 ${T + ch / 2})">Ort dbn (₺)</text>`;
-  // Noktalar (yarıçap = demet hacmine orantılı) + kısaltılmış etiket
   noktalar.forEach(p => {
     const r = 3 + Math.sqrt(p.d / dMax) * 9;
     svg += `<circle cx="${X(p.cv).toFixed(1)}" cy="${Y(p.dbn).toFixed(1)}" r="${r.toFixed(1)}" fill="rgba(34,120,74,0.35)" stroke="#22784a" stroke-width="1"/>`;
-    svg += `<text x="${X(p.cv).toFixed(1)}" y="${(Y(p.dbn) - r - 2).toFixed(1)}" text-anchor="middle" font-size="6.5" fill="#111827">${p.ad}</text>`;
+    svg += `<text x="${X(p.cv).toFixed(1)}" y="${(Y(p.dbn) - r - 2).toFixed(1)}" text-anchor="middle" font-size="6.5" fill="#111827">${p.ad} ${p.ok || ""}</text>`;
   });
   svg += `</svg>`;
   return svg;
@@ -746,51 +814,79 @@ async function generateTrendPDF() {
     if (ev.gunler.length === 0) { alert("Bu filtreyle mezat verisi yok."); return; }
     const filtreEtiket = state.sf ? state.sf.replace("GRUP:", "") + (state.sf.startsWith("GRUP:") ? " (Grup)" : "") : (state.sb ? state.sb : null);
     const doc = pdfBaslat("Çallı Çiçek — Trend & Piyasa Raporu",
-      "Son " + ev.gunler.length + " mezat: " + fD(ev.gunler[0]) + " – " + fD(ev.gunler[ev.gunler.length - 1]) + (filtreEtiket ? "   |   Filtre: " + filtreEtiket : ""));
+      "Son " + ev.gunler.length + " geçerli mezat" + (ev.kisitli ? " — mevcut 120 günlük veri" : "") + ": " + fD(ev.gunler[0]) + " – " + fD(ev.gunler[ev.gunler.length - 1]) + (filtreEtiket ? "   |   Filtre: " + filtreEtiket : ""));
     const W = doc.internal.pageSize.getWidth();
     const H = doc.internal.pageSize.getHeight();
     let y = 82;
     const grafW = W - 80;
-    const grafH = grafW * (158 / 360);   // viewBox oranı korunur (buildMezatChart H = 118+26+14 = 158)
+    const grafH = grafW * (158 / 360);
 
-    const serit = (baslikStr, ms) => {
+    const kucukTeknik = (ms) => {
       const v = trendMetrikSatiri(ms);
-      doc.setFont("DejaVu", "bold"); doc.setFontSize(9);
-      doc.text(pdfMetin(baslikStr), 40, y + 4);
-      doc.setFont("DejaVu", "normal"); doc.setFontSize(7.5);
+      doc.setFont("DejaVu", "normal"); doc.setFontSize(6.5);
       doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
-      doc.text(pdfMetin("Son: " + v[0] + "   ·   Eğim: " + v[1] + "   ·   ROC3: " + v[2] + "   ·   CV: " + v[3] + "   ·   Yapı: " + v[4]), 40, y + 15);
+      doc.text(pdfMetin("Son: " + v[0] + " · Eğim: " + v[1] + " · ROC3: " + v[2] + " · CV: " + v[3] + " · Yapı: " + v[4]), 40, y + 4);
       doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
-      y += 22;
+      y += 12;
     };
     const grafikEkle = async (ms) => {
       const png = await trendSvgStringToPng(buildMezatChart(ms, TREND_RAPOR_KATMANLAR), 2);
       if (y + grafH > H - 50) { doc.addPage(); y = 80; }
       doc.addImage(png, "JPEG", 40, y, grafW, grafH);
-      y += grafH + 8;
+      y += grafH + 6;
       if (ms.seri.some(p => !p.v2)) {
         doc.setFontSize(6.5); doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
-        doc.text(pdfMetin("31 Tem öncesi noktalar tahmini %20 net modeliyle (içi boş)"), 40, y);
+        doc.text(pdfMetin("31 Tem öncesi noktalar tahmini %20 net modeliyle — görselde soluk, hesaplara dahildir; zaman geçtikçe pencereden doğal olarak çıkacaklardır."), 40, y);
         doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
         y += 10;
       }
     };
+    const rejimRenk = rj => rj.ok === "↑" ? [22, 120, 74] : rj.ok === "↓" ? [220, 38, 38] : [100, 116, 139];
 
-    // ── 1) Piyasa Özeti (birleşik seri) ──
-    doc.setFont("DejaVu", "bold"); doc.setFontSize(12);
-    doc.text(pdfMetin("Piyasa Özeti"), 40, y); y += 10;
+    // ── 1) 🧭 Trend Yönetici Bulguları (EN ÜSTTE) ──
+    const bulgular = getTrendBulgulari(ev);
+    if (bulgular.length) {
+      doc.setFont("DejaVu", "bold"); doc.setFontSize(12);
+      doc.text(pdfMetin("🧭 Trend Yönetici Bulguları"), 40, y); y += 10;
+      doc.setFont("DejaVu", "normal"); doc.setFontSize(8);
+      bulgular.forEach(c => {
+        const lines = doc.splitTextToSize(pdfMetin("• " + c), W - 88);
+        if (y + lines.length * 10 > H - 50) { doc.addPage(); y = 80; }
+        doc.text(lines, 44, y + 4);
+        y += lines.length * 10 + 2;
+      });
+      y += 6;
+    }
+
+    // ── 2) Piyasa Özeti — rejim dili büyük, teknik küçük, grafik aynen ──
     const evrenMs = trendEvrenSeri(null, 30);
-    serit("Tüm evren (filtre dahilinde)", evrenMs);
+    const evrenRj = getRejim(evrenMs);
+    doc.setFont("DejaVu", "bold"); doc.setFontSize(12);
+    doc.setTextColor.apply(doc, rejimRenk(evrenRj));
+    doc.text(pdfMetin(evrenRj.ok + " Piyasa: " + rejimEtiket(evrenRj)), 40, y);
+    doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+    y += 8;
+    kucukTeknik(evrenMs);
     await grafikEkle(evrenMs);
 
-    // ── 2) Lider Ürünler (%80 hacim kapsamı) ──
+    // ── 3) Lider Ürünler — blok başlığı rejim dili ──
     if (y > H - 120) { doc.addPage(); y = 80; }
     doc.setFont("DejaVu", "bold"); doc.setFontSize(12);
-    doc.text(pdfMetin("Lider Ürünler — hacim %80 kapsamı (" + ev.liderler.length + " ürün, kapsam %" + ev.kapsamPct.toFixed(0) + ")"), 40, y); y += 10;
+    doc.text(pdfMetin("Lider Ürünler — hacim %80 kapsamı (" + ev.liderler.length + " ürün, %" + ev.kapsamPct.toFixed(0) + ")"), 40, y); y += 10;
     for (const c of ev.liderler) {
-      const ms = getMezatSerisi(c, state.sb || null, 30);
+      const ms = trendUrunSeri(c, state.sb || null, 30);
+      const rj = getRejim(ms);
       if (y + 30 > H - 50) { doc.addPage(); y = 80; }
-      serit(c + "  (" + (ev.siralı.find(u => u.c === c) || {}).d + " dm)", ms);
+      doc.setFont("DejaVu", "bold"); doc.setFontSize(10);
+      doc.setTextColor.apply(doc, rejimRenk(rj));
+      doc.text(pdfMetin(rj.ok + " " + c + " — " + rejimEtiket(rj)), 40, y + 4);
+      doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+      doc.setFont("DejaVu", "normal"); doc.setFontSize(6.5);
+      doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
+      doc.text(pdfMetin((ev.siralı.find(u => u.c === c) || {}).d + " dm"), W - 40, y + 4, { align: "right" });
+      doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+      y += 10;
+      kucukTeknik(ms);
       if (ms.n < 5) {
         doc.setFontSize(7.5); doc.setTextColor(202, 138, 4);
         doc.text(pdfMetin("Yetersiz mezat verisi (n=" + ms.n + ") — grafik atlandı"), 40, y); y += 12;
@@ -801,64 +897,84 @@ async function generateTrendPDF() {
       y += 4;
     }
 
-    // ── 3) ⚡ Önemli Fiyat Hareketleri (kilitli #6: kapsam dışı, n≥6, |son3/ilk3 − 1| top 3) ──
-    if (y > H - 130) { doc.addPage(); y = 80; }
+    // ── 4) ⚡ Önemli Fiyat Hareketleri — rejim kolonlu, en fazla 5 ──
+    if (y > H - 140) { doc.addPage(); y = 80; }
     doc.setFont("DejaVu", "bold"); doc.setFontSize(12);
     doc.text(pdfMetin("⚡ Önemli Fiyat Hareketleri"), 40, y); y += 6;
     const liderSet = new Set(ev.liderler);
-    const hareketler = ev.siralı.filter(u => !liderSet.has(u.c)).map(u => {
-      const ms = getMezatSerisi(u.c, state.sb || null, 30);
+    const kapsamDisi = ev.siralı.filter(u => !liderSet.has(u.c)).map(u => {
+      const ms = trendUrunSeri(u.c, state.sb || null, 30);
       if (ms.n < 6) return null;
       const ilk3 = ms.seri.slice(0, 3), son3 = ms.seri.slice(-3);
       const ilkOrt = ilk3.reduce((s, p) => s + p.dbn, 0) / 3;
       const sonOrt = son3.reduce((s, p) => s + p.dbn, 0) / 3;
-      if (ilkOrt <= 0) return null;
-      return { c: u.c, n: ms.n, degisim: (sonOrt / ilkOrt - 1) * 100, sonDbn: ms.seri[ms.n - 1].dbn, d: u.d };
-    }).filter(Boolean).sort((a, b) => Math.abs(b.degisim) - Math.abs(a.degisim)).slice(0, 3);
-    if (hareketler.length === 0) {
+      return { c: u.c, d: u.d, ms, rj: getRejim(ms), degisim: ilkOrt > 0 ? (sonOrt / ilkOrt - 1) * 100 : null };
+    }).filter(Boolean);
+    const hAdaylar = [...kapsamDisi].sort((a, b) => Math.abs(b.degisim || 0) - Math.abs(a.degisim || 0));
+    const secilenH = [];
+    hAdaylar.forEach(h => { if (secilenH.length < 3) secilenH.push(h); });
+    kapsamDisi.filter(h => h.rj.kirilmaAilesi && !secilenH.includes(h)).forEach(h => { if (secilenH.length < 5) secilenH.push(h); });
+    const hacimMedyan = (() => { const v = kapsamDisi.map(h => h.d).sort((a, b) => a - b); return v.length ? v[Math.floor(v.length / 2)] : 0; })();
+    const nedenYaz = h => {
+      const hs = h.d >= hacimMedyan ? "Yüksek" : "Düşük";
+      if (h.rj.rejim === "Güçlenen düşüş" || h.rj.rejim === "Aşağı kırılma riski") return hs + " hacimde sert bozulma";
+      if (h.rj.rejim === "Güçlenen yükseliş" || h.rj.rejim === "Yukarı kırılma adayı") return hs + " hacimde sert sıçrama";
+      if (h.rj.kirilmaAilesi) return "Dönüş sinyali — izle";
+      return "Sert fiyat hareketi";
+    };
+    if (secilenH.length === 0) {
       doc.setFont("DejaVu", "normal"); doc.setFontSize(8);
       doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
       doc.text(pdfMetin("Kapsam dışında n≥6 ürün yok."), 40, y + 8); y += 18;
       doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
     } else {
-      y = pdfTablo(doc, ["Ürün", "n", "Değişim (son3/ilk3)", "Son dbn", "Demet"],
-        hareketler.map(h => [h.c, String(h.n), (h.degisim >= 0 ? "+" : "−") + "%" + Math.abs(h.degisim).toFixed(0), fmt(h.sonDbn), String(h.d)]),
-        { startY: y + 6, kucuk: true, columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" } },
-          didParseCell: function(data) {
-            if (data.section === "body" && data.column.index === 2) {
-              data.cell.styles.textColor = String(data.cell.raw).indexOf("+") === 0 ? [22, 120, 74] : [220, 38, 38];
-            }
-          } }) + 10;
+      y = pdfTablo(doc, ["Ürün", "Rejim", "Eğim", "Momentum", "CV", "Hacim", "Neden dikkat?"],
+        secilenH.map(h => [h.c, rejimEtiket(h.rj), h.ms.slope === null ? "—" : (h.ms.slope >= 0 ? "+" : "") + h.ms.slope.toFixed(1), h.ms.roc3 === null ? "—" : (h.ms.roc3 >= 0 ? "+" : "−") + "%" + Math.abs(h.ms.roc3).toFixed(0), h.ms.cv === null ? "—" : "%" + h.ms.cv.toFixed(0), h.d + " dm", nedenYaz(h)]),
+        { startY: y + 6, kucuk: true, fontSize: 6.5, columnStyles: { 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" } } }) + 10;
     }
 
-    // ── 4) Ana 3 Şube Kırılımı (metrik şeritleri — grafiksiz) ──
-    if (y > H - 120) { doc.addPage(); y = 80; }
+    // ── 5) Şubeler: Ana 3 (ekonomik önem) + Trend İstisnaları ──
+    if (y > H - 130) { doc.addPage(); y = 80; }
     doc.setFont("DejaVu", "bold"); doc.setFontSize(12);
-    doc.text(pdfMetin("Ana 3 Şube Kırılımı"), 40, y); y += 6;
-    const gunSet2 = new Set(ev.gunler);
-    const filtre2 = r =>
-      (!state.sf || (state.sf.startsWith("GRUP:") ? r.c.startsWith(state.sf.replace("GRUP:", "")) : r.c === state.sf)) &&
-      (!state.sb || r.s === state.sb);
-    const pencereRows = ALL_DATA.filter(r => gunSet2.has(r.t) && filtre2(r));
+    doc.text(pdfMetin("Ana 3 Şube"), 40, y); y += 6;
     const subeAgg = {};
-    pencereRows.forEach(r => { if (!subeAgg[r.s]) subeAgg[r.s] = { net: 0, d: 0 }; subeAgg[r.s].net += r.net; subeAgg[r.s].d += r.d; });
+    ev.pencereRows.forEach(r => { if (!subeAgg[r.s]) subeAgg[r.s] = { net: 0, d: 0 }; subeAgg[r.s].net += r.net; subeAgg[r.s].d += r.d; });
     const toplamNet2 = Object.values(subeAgg).reduce((s, v) => s + v.net, 0);
-    const ilk3Sube = Object.entries(subeAgg).sort((a, b) => b[1].net - a[1].net).slice(0, 3);
-    const subeSatirlar = ilk3Sube.map(([s, v]) => {
-      const ms = trendEvrenSeri(s, 30);
-      const m = trendMetrikSatiri(ms);
-      return [s, fmt(v.net), String(v.d), toplamNet2 > 0 ? "%" + (v.net / toplamNet2 * 100).toFixed(0) : "—", m[0], m[1], m[2], m[3], m[4]];
-    });
-    y = pdfTablo(doc, ["Şube", "Net", "Demet", "Pay", "Son dbn", "Eğim", "ROC3", "CV", "Yapı"], subeSatirlar,
-      { startY: y + 6, kucuk: true, fontSize: 6.5, columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right" }, 7: { halign: "right" } } }) + 10;
+    const anaSirali = Object.entries(subeAgg).sort((a, b) => b[1].net - a[1].net);
+    const ana3 = anaSirali.slice(0, 3).map(([s]) => s);
+    const subeMsCache = {};
+    const subeMs = s => subeMsCache[s] || (subeMsCache[s] = trendEvrenSeri(s, 30));
+    y = pdfTablo(doc, ["Şube", "Rejim", "Net", "Demet", "Pay", "Eğim", "ROC3", "CV"],
+      ana3.map(s => {
+        const ms = subeMs(s), rj = getRejim(ms);
+        return [rj.ok + " " + s, rejimEtiket(rj), fmt(subeAgg[s].net), String(subeAgg[s].d), toplamNet2 > 0 ? "%" + (subeAgg[s].net / toplamNet2 * 100).toFixed(0) : "—",
+          ms.slope === null ? "—" : (ms.slope >= 0 ? "+" : "") + ms.slope.toFixed(1), ms.roc3 === null ? "—" : (ms.roc3 >= 0 ? "+" : "−") + "%" + Math.abs(ms.roc3).toFixed(0), ms.cv === null ? "—" : "%" + ms.cv.toFixed(0)];
+      }),
+      { startY: y + 6, kucuk: true, fontSize: 6.5, columnStyles: { 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right" }, 7: { halign: "right" } } }) + 8;
+    // Trend İstisnaları
+    const ana3Set = new Set(ana3);
+    const istisnalar = anaSirali.map(([s]) => s).filter(s => !ana3Set.has(s)).map(s => {
+      const ms = subeMs(s), rj = getRejim(ms);
+      if (!rj.rejim || ms.roc3 === null) return null;
+      const zit = (rj.egimSinifi === "+" && rj.momentumSinifi === "-") || (rj.egimSinifi === "-" && rj.momentumSinifi === "+");
+      if (rj.kirilmaAilesi || (zit && Math.abs(ms.roc3) >= 20)) return { s, ms, rj, zit };
+      return null;
+    }).filter(Boolean).sort((a, b) => Math.abs(b.ms.roc3) - Math.abs(a.ms.roc3)).slice(0, 3);
+    if (istisnalar.length) {
+      doc.setFont("DejaVu", "bold"); doc.setFontSize(10);
+      doc.text(pdfMetin("Trend İstisnaları"), 40, y + 4); y += 8;
+      y = pdfTablo(doc, ["Şube", "Rejim", "ROC3", "CV", "Neden"],
+        istisnalar.map(x => [x.rj.ok + " " + x.s, rejimEtiket(x.rj), (x.ms.roc3 >= 0 ? "+" : "−") + "%" + Math.abs(x.ms.roc3).toFixed(0), x.ms.cv === null ? "—" : "%" + x.ms.cv.toFixed(0), x.zit ? "eğim ile momentum zıt yönde" : "kırılma/dönüş rejimi"]),
+        { startY: y + 4, kucuk: true, fontSize: 6.5, columnStyles: { 2: { halign: "right" }, 3: { halign: "right" } } }) + 10;
+    }
 
-    // ── 5) Volatilite × Fiyat Haritası (scatter, n≥6) ──
+    // ── 6) Volatilite × Fiyat Haritası — balonlarda rejim oku ──
     const scatterNoktalar = ev.siralı.map(u => {
-      const ms = getMezatSerisi(u.c, state.sb || null, 30);
+      const ms = trendUrunSeri(u.c, state.sb || null, 30);
       if (ms.n < 6 || ms.cv === null) return null;
       const ortDbn = ms.seri.reduce((s, p) => s + p.dbn * p.d, 0) / ms.seri.reduce((s, p) => s + p.d, 0);
       const ad = u.c.length > 14 ? u.c.split(" ").map(w => w.substring(0, 4)).join(".") : u.c;
-      return { ad, cv: ms.cv, dbn: ortDbn, d: u.d };
+      return { ad, cv: ms.cv, dbn: ortDbn, d: u.d, ok: getRejim(ms).ok };
     }).filter(Boolean);
     if (scatterNoktalar.length >= 2) {
       const scH = grafW * (230 / 360);
@@ -870,7 +986,7 @@ async function generateTrendPDF() {
       y += scH + 8;
       doc.setFont("DejaVu", "normal"); doc.setFontSize(7);
       doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
-      doc.text(doc.splitTextToSize(pdfMetin("Okuma: sağ üst = pahalı ve oynak (fırsat/risk), sol üst = pahalı ve istikrarlı (çekirdek gelir). Nokta büyüklüğü = demet hacmi. n≥6 ürünler."), W - 80), 40, y);
+      doc.text(doc.splitTextToSize(pdfMetin("Okuma: sağ üst = pahalı ve oynak (fırsat/risk), sol üst = pahalı ve istikrarlı (çekirdek gelir). Nokta büyüklüğü = demet hacmi; ↑↓→ = rejim yönü. n≥6 ürünler."), W - 80), 40, y);
       doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
     }
 

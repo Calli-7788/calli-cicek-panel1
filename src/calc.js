@@ -483,11 +483,18 @@ function getOzetCumleleri(filtered) {
 //                                (sahte tarihsel kıyas üretilmez; yetmiyorsa "yetersiz dönem verisi" kalır)
 //   P75/kapasite (fırsat)     → getBrutFiyatFirsati içinde: her gün t için t-öncesi VE son 120 gün
 //   Trend & Piyasa / Backtest / Planlayıcı → DEĞİŞMEZ (kendi pencere mantıkları var)
+// 120 GÜN GÜNCELLİK SINIRI — ortak yardımcı (Faz 1.3 kuralının tek kaynağı).
+// Yönetici Analiz VE Trend & Piyasa raporları bunu kullanır; Çiçek Analiz ekran grafiği,
+// Backtest ve Planlayıcı kendi pencere mantıklarıyla DEĞİŞMEZ.
+function getGuncellikSiniri() {
+  return new Date(Date.now() - 120 * 864e5).toISOString().split("T")[0];
+}
+
 function getYoneticiPencere(N) {
   const filtre = r =>
     (!state.sf || (state.sf.startsWith("GRUP:") ? r.c.startsWith(state.sf.replace("GRUP:", "")) : r.c === state.sf)) &&
     (!state.sb || r.s === state.sb);
-  const minTarih = new Date(Date.now() - 120 * 864e5).toISOString().split("T")[0];
+  const minTarih = getGuncellikSiniri();
   const rows = ALL_DATA.filter(r => r.t >= minTarih && filtre(r));
   const gunler = [...new Set(rows.map(r => r.t))].sort();
   const gun1 = gunler.slice(-N);
@@ -885,4 +892,36 @@ function getYoneticiBulgulari(yp) {
     maddeler: M.slice(0, 6),
     not: "Bu bulgular stratejik sinyaldir; günlük tahsis kararını Planlayıcı güncel veriyle verir."
   };
+}
+
+// ═══════════════ REJİM MOTORU (Rapor Faz 2.1) ═══════════════
+// YALNIZ rapor katmanıdır — Planlayıcı karar motoruna BAĞLANMAZ (patron talimatı).
+// getMezatSerisi'nin mevcut alanlarına dokunulmaz; rejim ayrı türetilir.
+// Momentum eşiği ±%5 (gerçek ROC3 dağılımıyla doğrulandı — rapor dokümantasyonunda).
+// CV risk katmanı YÖN DEĞİL: <%15 düşük · %15-25 orta · >%25 yüksek oynaklık.
+function getRejim(ms) {
+  if (!ms || ms.n === 0) return { rejim: null, riskKatmani: null, ok: "→", momentumSinifi: null, egimSinifi: null, kirilmaAilesi: false };
+  const mom = ms.roc3 === null ? null : (ms.roc3 > 5 ? "+" : ms.roc3 < -5 ? "-" : "yatay");
+  const egim = ms.slopeYon === null ? null : (ms.slopeYon === "yükseliş" ? "+" : ms.slopeYon === "düşüş" ? "-" : "yatay");
+  let rejim = null, ok = "→";
+  if (egim !== null && mom !== null) {
+    if (egim === "+" && mom === "+") { rejim = "Güçlenen yükseliş"; ok = "↑"; }
+    else if (egim === "+" && mom === "-") { rejim = "Yükseliş zayıflıyor / dönüş riski"; ok = "↑"; }
+    else if (egim === "yatay" && mom === "+") { rejim = "Yukarı kırılma adayı"; ok = "→"; }
+    else if (egim === "yatay" && mom === "-") { rejim = "Aşağı kırılma riski"; ok = "→"; }
+    else if (egim === "-" && mom === "+") { rejim = "Toparlanma adayı / düşüş zayıflıyor"; ok = "↓"; }
+    else if (egim === "-" && mom === "-") { rejim = "Güçlenen düşüş"; ok = "↓"; }
+    else if (egim === "+" && mom === "yatay") { rejim = "İstikrarlı yükseliş"; ok = "↑"; }
+    else if (egim === "-" && mom === "yatay") { rejim = "İstikrarlı düşüş"; ok = "↓"; }
+    else { rejim = "Yatay / dengeli"; ok = "→"; }
+  }
+  const risk = ms.cv === null ? null : (ms.cv < 15 ? "düşük oynaklık" : ms.cv <= 25 ? "orta oynaklık" : "yüksek oynaklık");
+  const kirilmaAilesi = rejim !== null && (rejim.indexOf("kırılma") >= 0 || rejim.indexOf("dönüş") >= 0 || rejim.indexOf("zayıflıyor") >= 0 || rejim.indexOf("Toparlanma") >= 0);
+  return { rejim, riskKatmani: risk, ok, momentumSinifi: mom, egimSinifi: egim, kirilmaAilesi };
+}
+
+// "Güçlenen düşüş — yüksek oynaklık" biçiminde birleşik etiket
+function rejimEtiket(rj) {
+  if (!rj || !rj.rejim) return "—";
+  return rj.rejim + (rj.riskKatmani ? " — " + rj.riskKatmani : "");
 }

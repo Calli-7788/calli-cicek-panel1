@@ -2722,21 +2722,24 @@ function render() {
       if (tev.gunler.length === 0) {
         html += `<div style="font-size:12px;color:#fbbf24;text-align:center;padding:16px">Bu filtreyle mezat verisi yok.</div>`;
       } else {
-        // ① Piyasa özet şeridi
+        // ① Piyasa özet şeridi — rejim dili büyük, teknik küçük
         const tEvrenMs = trendEvrenSeri(null, 30);
+        const tEvrenRj = getRejim(tEvrenMs);
         const tv = trendMetrikSatiri(tEvrenMs);
+        const rjRenk = rj => rj.ok === "↑" ? "#34d399" : rj.ok === "↓" ? "#f87171" : "#94a3b8";
         html += `<div style="padding:8px 10px;border-radius:8px;background:rgba(34,197,94,0.06);border:1px solid rgba(34,197,94,0.15);margin-bottom:10px">`;
-        html += `<div style="font-size:10px;font-weight:700;color:#4ade80;margin-bottom:4px">Piyasa Özeti (tüm evren)</div>`;
-        html += `<div style="font-size:10px;color:#e2e8f0">Son: <strong>${esc(tv[0])}</strong> · Eğim: ${esc(tv[1])} · ROC3: ${esc(tv[2])} · CV: ${esc(tv[3])} · Yapı: <span style="color:${tEvrenMs.fan && tEvrenMs.fan.includes("yükseliş") ? "#34d399" : tEvrenMs.fan && tEvrenMs.fan.includes("düşüş") ? "#f87171" : "#94a3b8"}">${esc(tv[4])}</span></div>`;
+        html += `<div style="font-size:11px;font-weight:700;color:${rjRenk(tEvrenRj)};margin-bottom:3px">${esc(tEvrenRj.ok)} Piyasa: ${esc(rejimEtiket(tEvrenRj))}</div>`;
+        html += `<div style="font-size:8.5px;color:#64748b">Son: ${esc(tv[0])} · Eğim: ${esc(tv[1])} · ROC3: ${esc(tv[2])} · CV: ${esc(tv[3])}</div>`;
         html += `</div>`;
-        // ② Lider ürün listesi (grafiksiz, metrik şeritleriyle)
+        // ② Lider ürün listesi — rejim etiketiyle
         html += `<div style="font-size:10px;font-weight:700;color:#94a3b8;margin-bottom:4px">Lider Ürünler — hacim %80 kapsamı (${tev.liderler.length} ürün, %${tev.kapsamPct.toFixed(0)})</div>`;
         tev.liderler.forEach(c => {
-          const ms = getMezatSerisi(c, state.sb || null, 30);
+          const ms = trendUrunSeri(c, state.sb || null, 30);
+          const rj = getRejim(ms);
           const v = trendMetrikSatiri(ms);
           html += `<div style="display:flex;justify-content:space-between;gap:8px;font-size:9.5px;padding:4px 0;border-top:1px solid rgba(255,255,255,0.03)">`;
           html += `<span style="color:#cbd5e1;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c)}</span>`;
-          html += `<span style="color:#34d399;font-weight:600">${esc(v[0])}</span><span style="color:#94a3b8">${esc(v[2])}</span><span style="color:#64748b">${esc(v[4])}</span>`;
+          html += `<span style="color:${rjRenk(rj)};font-weight:600">${esc(rj.ok)} ${esc(rj.rejim || "—")}</span><span style="color:#64748b">${esc(v[0])}</span>`;
           html += `</div>`;
         });
         html += `<div style="font-size:9px;color:#475569;margin-top:8px">PDF'te grafikli tam detay: piyasa grafiği, ürün grafikleri (EWMA/SMA5/hacim/outlier), önemli-3 hareket, şube şeritleri, volatilite×fiyat haritası.</div>`;
