@@ -292,7 +292,7 @@ function generateYoneticiPDF() {
   if (yp.gun1.length === 0) { alert("Bu filtreyle mezat verisi yok."); return; }
 
   const filtreEtiket = state.sf ? state.sf.replace("GRUP:", "") + (state.sf.startsWith("GRUP:") ? " (Grup)" : "") : (state.sb ? state.sb : null);
-  const altB = "Son " + yp.gun1.length + " mezat: " + fD(yp.gun1[0]) + " – " + fD(yp.gun1[yp.gun1.length - 1]) +
+  const altB = "Son " + yp.gun1.length + " mezat" + (yp.kisitli ? " — mevcut 120 günlük veri" : "") + ": " + fD(yp.gun1[0]) + " – " + fD(yp.gun1[yp.gun1.length - 1]) +
     (yp.gun0.length ? "   |   Kıyas: önceki " + yp.gun0.length + " mezat" : "") +
     (filtreEtiket ? "   |   Filtre: " + filtreEtiket : "");
   const doc = pdfBaslat("Çallı Çiçek — Yönetici Analiz Raporu", altB);
@@ -452,7 +452,9 @@ function generateYoneticiPDF() {
     if (!komboM[k]) komboM[k] = { c: r.c, s: r.s, net: 0, d: 0, gunler: new Set() };
     komboM[k].net += r.net; komboM[k].d += r.d; komboM[k].gunler.add(r.t);
   });
-  Object.values(komboM).forEach(k => { k.n = k.gunler.size; k.dbn = k.d > 0 ? k.net / k.d : 0; });
+  Object.values(komboM).forEach(k => { k.comboDays = k.gunler.size; k.dbn = k.d > 0 ? k.net / k.d : 0; });
+  const urunToplamD = {};
+  Object.values(komboM).forEach(k => { urunToplamD[k.c] = (urunToplamD[k.c] || 0) + k.d; });
   const yRS = getRS(yp.d1);
   const vi = getValueIndex(yp.d1);
 
@@ -466,7 +468,7 @@ function generateYoneticiPDF() {
   const hmN = getNYeterli(yp.gun1.length);
   const istisnalar = hacimSirali.slice(8).filter(v => {
     const r = yRS.sube[v.sube];
-    return r && r.n >= hmN && (r.rs >= 1.10 || r.rs <= 0.90);
+    return r && r.rsComparableDays >= hmN && (r.rs >= 1.10 || r.rs <= 0.90);
   }).slice(0, 2).map(v => v.sube);
   const subeSirali = ilk8.concat(istisnalar);
   const istisnaSet = new Set(istisnalar);
@@ -483,12 +485,12 @@ function generateYoneticiPDF() {
       const k = komboM[c + "|" + s];
       if (!k) { satirVals.push(null); return ""; }
       satirVals.push(k);
-      return fmt(k.dbn) + "\n" + k.d + "dm" + (k.n < 3 ? "\nn<3" : "");
+      return fmt(k.dbn) + "\n" + k.d + "dm" + (k.comboDays < 3 ? "\nn<3" : "");
     }));
-    const dbnler = satirVals.filter(v => v && v.n >= 3).map(v => v.dbn);
+    const dbnler = satirVals.filter(v => v && v.comboDays >= 3).map(v => v.dbn);
     const mn = dbnler.length ? Math.min.apply(null, dbnler) : 0;
     const mx = dbnler.length ? Math.max.apply(null, dbnler) : 1;
-    hmMeta.push(satirVals.map(v => v === null ? null : { n: v.n, norm: (mx > mn && v.n >= 3) ? (v.dbn - mn) / (mx - mn) : (v.n >= 3 ? 0.5 : 0) }));
+    hmMeta.push(satirVals.map(v => v === null ? null : { n: v.comboDays, norm: (mx > mn && v.comboDays >= 3) ? (v.dbn - mn) / (mx - mn) : (v.comboDays >= 3 ? 0.5 : 0) }));
     return row;
   });
   y = pdfTablo(doc, ["Ürün"].concat(subeSirali.map(s => (istisnaSet.has(s) ? "★ " : "") + s)), hmRows, {
@@ -510,7 +512,7 @@ function generateYoneticiPDF() {
   y += 10;
   // İş 5: Ürün×şube otomatik bulgular — heatmap "hangi ürün hangi şubeyle iyi?" cevabı
   const kb = getKomboBulgulari(Object.values(komboM), yRS.kombo, yp.gun1);
-  const kbFmt = k => k.c + "→" + k.s + " (RS " + k.rs.toFixed(2).replace(".", ",") + ", n=" + k.n + ")";
+  const kbFmt = k => k.c + "→" + k.s + " (RS " + k.rs.toFixed(2).replace(".", ",") + ", n=" + k.rsN + ")";
   doc.setFontSize(7.5);
   if (kb.guclu.length) {
     doc.setTextColor(22, 120, 74);
@@ -534,11 +536,11 @@ function generateYoneticiPDF() {
   if (y > H - 140) { doc.addPage(); y = 80; }
   doc.setFont("DejaVu", "bold"); doc.setFontSize(11);
   doc.text(pdfMetin("Şube Tablosu"), 40, y + 4);
-  const rsFmtT = v => v ? "RS " + v.rs.toFixed(2).replace(".", ",") + " (n=" + v.n + ")" : "—";
+  const rsFmtT = v => v ? "RS " + v.rs.toFixed(2).replace(".", ",") + " (n=" + v.rsComparableDays + ")" : "—";
   const subeEtiketleri = [];
   const srows = vi.map(v => {
     const rsv = yRS.sube[v.sube];
-    const et = getVeriGuveni(rsv ? rsv.n : null, rsv ? rsv.rs : null, null, yp.gun1.length);
+    const et = getVeriGuveni(rsv ? rsv.rsComparableDays : null, rsv ? rsv.rs : null, null, yp.gun1.length, null);
     subeEtiketleri.push(et);
     return [v.sube, "%" + v.gelirPay.toFixed(1), "%" + v.hacimPay.toFixed(1), v.vi !== null ? v.vi.toFixed(2).replace(".", ",") : "—", rsFmtT(rsv), et.etiket];
   });
@@ -588,12 +590,13 @@ function generateYoneticiPDF() {
 
   // ── 6) Top-10 / Bottom-10 kombinasyon (n≥3) ──
   if (y > H - 140) { doc.addPage(); y = 80; }
-  const uygunK = Object.values(komboM).filter(k => k.n >= 3).sort((a, b) => b.dbn - a.dbn);
+  const uygunK = Object.values(komboM).filter(k => k.comboDays >= 3).sort((a, b) => b.dbn - a.dbn);
   const kSatir = k => {
     const rsv = yRS.kombo[k.c + "|" + k.s];
     const arz = getArzDuzenlilik(k.c, k.s, yp.gun1);
-    const et = getVeriGuveni(k.n, rsv ? rsv.rs : null, arz ? arz.oran : null, yp.gun1.length);
-    return [k.c + " → " + k.s, String(k.n), String(k.d), fmt(k.dbn), rsFmtT(rsv), arz ? arz.satis + "/" + arz.toplam + " · %" + arz.oran.toFixed(0) : "—", et.etiket];
+    const hacimPayi = urunToplamD[k.c] > 0 ? k.d / urunToplamD[k.c] * 100 : null;
+    const et = getVeriGuveni(rsv ? rsv.rsComparableDays : null, rsv ? rsv.rs : null, arz ? arz.oran : null, yp.gun1.length, hacimPayi);
+    return [k.c + " → " + k.s, String(k.comboDays), String(k.d), fmt(k.dbn), rsFmtT(rsv), arz ? arz.satis + "/" + arz.toplam + " · %" + arz.oran.toFixed(0) : "—", et.etiket];
   };
   const komboEtiketRenk = satirlar => function(data) {
     if (data.section !== "body") return;
@@ -605,7 +608,7 @@ function generateYoneticiPDF() {
     }
     if (data.column.index === 6) {
       const et = satirlar[data.row.index] ? satirlar[data.row.index][6] : "";
-      data.cell.styles.textColor = et === "kanıtlanmış sinyal" ? [22, 120, 74] : et === "risk sinyali" ? [220, 38, 38] : et === "keşif adayı" ? [37, 99, 235] : [130, 140, 155];
+      data.cell.styles.textColor = et === "kanıtlanmış sinyal" ? [22, 120, 74] : et === "risk sinyali" ? [220, 38, 38] : et === "hacimli zayıf sinyal" ? [217, 119, 6] : et === "keşif adayı" ? [37, 99, 235] : [130, 140, 155];
     }
   };
   const kKolonlar = ["Kombo", "n", "Demet", "dbn", "RS", "Arz Düzenliliği", "Veri Güveni"];
@@ -623,7 +626,7 @@ function generateYoneticiPDF() {
     { startY: y + 10, kucuk: true, columnStyles: kStil, didParseCell: komboEtiketRenk(botSatirlar) }) + 8;
   doc.setFont("DejaVu", "normal"); doc.setFontSize(7);
   doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
-  doc.text(pdfMetin("n<3 mezat günlü kombolar listelere dahil edilmez."), 40, y + 2);
+  doc.text(doc.splitTextToSize(pdfMetin("n<3 mezat günlü kombolar listelere dahil edilmez. Kombo n = satış günü sayısı (arz frekansı); RS yanındaki (n=…) = ≥2 şubeli karşılaştırılabilir gün — güven etiketleri bu sayıyla verilir. Hacimli zayıf sinyal: RS ≤0,90 + sınırlı örneklem + ürün demet payı ≥%15 (göreli eşik)."), W - 80), 40, y + 2);
 
   pdfOnizlemeAc(doc, pdfDosyaAdi("yonetici"));
 }

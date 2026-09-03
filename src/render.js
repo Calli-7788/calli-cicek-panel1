@@ -2620,7 +2620,7 @@ function render() {
       const filtreEtiket = state.sf ? state.sf.replace("GRUP:", "") + (state.sf.startsWith("GRUP:") ? " (Grup)" : "") : (state.sb ? state.sb : null);
       html += `<div class="card" style="margin-bottom:14px;background:rgba(255,255,255,0.04)">`;
       html += `<div style="font-size:14px;font-weight:700;color:#f8fafc;margin-bottom:4px">📊 Yönetici Analiz Önizleme</div>`;
-      html += `<div style="font-size:10px;color:#64748b;margin-bottom:8px">Son ${yp.gun1.length} mezat: ${yp.gun1.length ? fD(yp.gun1[0]) + " – " + fD(yp.gun1[yp.gun1.length - 1]) : "—"}${filtreEtiket ? ' · <span style="color:#fbbf24">Filtre: ' + esc(filtreEtiket) + '</span>' : ''} · üst tarih filtresinden bağımsız</div>`;
+      html += `<div style="font-size:10px;color:#64748b;margin-bottom:8px">Son ${yp.gun1.length} mezat${yp.kisitli ? " — mevcut 120 günlük veri" : ""}: ${yp.gun1.length ? fD(yp.gun1[0]) + " – " + fD(yp.gun1[yp.gun1.length - 1]) : "—"}${filtreEtiket ? ' · <span style="color:#fbbf24">Filtre: ' + esc(filtreEtiket) + '</span>' : ''} · üst tarih filtresinden bağımsız</div>`;
       html += `<div style="display:flex;gap:5px;margin-bottom:10px">`;
       [5, 10, 20].forEach(n => {
         const akt = state.yonMezatN === n;
@@ -2695,14 +2695,14 @@ function render() {
           if (!komboM[k]) komboM[k] = { c: r.c, s: r.s, net: 0, d: 0, gunler: new Set() };
           komboM[k].net += r.net; komboM[k].d += r.d; komboM[k].gunler.add(r.t);
         });
-        const topK = Object.values(komboM).map(k => ({ ...k, n: k.gunler.size, dbn: k.d > 0 ? k.net / k.d : 0 }))
-          .filter(k => k.n >= 3).sort((a, b) => b.dbn - a.dbn).slice(0, 5);
+        const topK = Object.values(komboM).map(k => ({ ...k, comboDays: k.gunler.size, dbn: k.d > 0 ? k.net / k.d : 0 }))
+          .filter(k => k.comboDays >= 3).sort((a, b) => b.dbn - a.dbn).slice(0, 5);
         if (topK.length) {
           html += `<div style="font-size:10px;font-weight:700;color:#94a3b8;margin-bottom:4px">Top 5 Kombo (dbn)</div>`;
           topK.forEach(k => {
             const rsV = yRS.kombo[k.c + "|" + k.s];
             const rsRenk = !rsV ? "#475569" : rsV.rs > 1.05 ? "#34d399" : rsV.rs < 0.95 ? "#f87171" : "#94a3b8";
-            html += `<div style="display:flex;justify-content:space-between;font-size:10px;padding:3px 0;border-top:1px solid rgba(255,255,255,0.03)"><span style="color:#cbd5e1">${esc(k.c)} → ${esc(k.s)} <span style="color:#475569">(n=${k.n})</span></span><span><span style="color:#34d399;font-weight:600">${fmt(k.dbn)}/dm</span> <span style="color:${rsRenk};font-size:9px">${rsV ? "RS " + rsV.rs.toFixed(2).replace(".", ",") + " (n=" + rsV.n + ")" : "RS —"}</span></span></div>`;
+            html += `<div style="display:flex;justify-content:space-between;font-size:10px;padding:3px 0;border-top:1px solid rgba(255,255,255,0.03)"><span style="color:#cbd5e1">${esc(k.c)} → ${esc(k.s)} <span style="color:#475569">(n=${k.comboDays})</span></span><span><span style="color:#34d399;font-weight:600">${fmt(k.dbn)}/dm</span> <span style="color:${rsRenk};font-size:9px">${rsV ? "RS " + rsV.rs.toFixed(2).replace(".", ",") + " (n=" + rsV.rsComparableDays + ")" : "RS —"}</span></span></div>`;
           });
         }
         html += `<div style="font-size:9px;color:#475569;margin-top:8px">PDF'te tüm bölümler tam detaylı: ayrıştırma tablosu, ürün×şube heatmap, şube VI/RS tablosu, fırsat detayı, Top/Bottom-10.</div>`;

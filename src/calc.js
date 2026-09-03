@@ -474,12 +474,21 @@ function getOzetCumleleri(filtered) {
 // ═══════════════ YÖNETİCİ ANALİZ RAPORU HESAPLARI (Rapor Faz 1) ═══════════════
 
 // Rapor penceresi: üst tarih filtresinden BAĞIMSIZ, seçili çiçek/şube filtresi UYGULANIR.
-// Son N mezat günü (d1) + önceki eşdeğer N mezat günü (d0), filtreli evrenin günlerinden.
+// İŞ 3 (Faz 1.3) — 120 GÜN GÜNCELLİK PENCERESİ (yalnız Yönetici Analiz raporu):
+// "Son N mezat" = bugünden geriye SON 120 TAKVİM GÜNÜ içindeki en fazla N mezat günü.
+// 120 günden eski kayıt bu rapora GİRMEZ; N dolmuyorsa eskiye uzanılmaz (başlık dürüst).
+// Lookback tablosu:
+//   Ana pencere (gun1)        → 120 gün içi, en fazla N mezat   (güncel sezon analizi)
+//   Kıyas penceresi (gun0)    → ana pencere öncesi, yine 120 gün sınırı içinde
+//                                (sahte tarihsel kıyas üretilmez; yetmiyorsa "yetersiz dönem verisi" kalır)
+//   P75/kapasite (fırsat)     → getBrutFiyatFirsati içinde: her gün t için t-öncesi VE son 120 gün
+//   Trend & Piyasa / Backtest / Planlayıcı → DEĞİŞMEZ (kendi pencere mantıkları var)
 function getYoneticiPencere(N) {
   const filtre = r =>
     (!state.sf || (state.sf.startsWith("GRUP:") ? r.c.startsWith(state.sf.replace("GRUP:", "")) : r.c === state.sf)) &&
     (!state.sb || r.s === state.sb);
-  const rows = ALL_DATA.filter(filtre);
+  const minTarih = new Date(Date.now() - 120 * 864e5).toISOString().split("T")[0];
+  const rows = ALL_DATA.filter(r => r.t >= minTarih && filtre(r));
   const gunler = [...new Set(rows.map(r => r.t))].sort();
   const gun1 = gunler.slice(-N);
   const gun0 = gunler.slice(-2 * N, -N);
@@ -487,10 +496,9 @@ function getYoneticiPencere(N) {
   return {
     d1: rows.filter(r => s1.has(r.t)), d0: rows.filter(r => s0.has(r.t)),
     gun1, gun0,
-    // Dönem-öncesi sınırı = DEĞERLENDİRME penceresinin (d1) ilk günü.
-    // (Faz 1.1 düzeltmesi: d0[0] kullanmak, seyrek tarihçeli ürünlerde sınırı yıllarca
-    // geriye itip P75 kümesini boşaltıyordu → kapasite ayarlı fırsat 0'a çöküyordu.
-    // t < gun1[0] verisi d1'deki her gün için geçmiştir — walk-forward korunur.)
+    istenenN: N,
+    kisitli: gun1.length < N,          // 120 gün penceresi N'i doldurmadı → başlıkta belirtilir
+    minTarih,
     oncesi: gun1.length ? gun1[0] : null
   };
 }
@@ -562,7 +570,9 @@ function getRS(rows) {
     const out = {};
     Object.keys(acc).forEach(k => {
       const v = acc[k];
-      out[k] = v.n >= 3 && v.d > 0 ? { rs: v.top / v.d, n: v.n } : null;
+      // rsComparableDays: RS hesabına giren ≥2 şubeli gün-ürün gözlemleri — GÜVEN/HÜKÜM esası budur.
+      // (comboDays = kombonun satış yaptığı mezat günü sayısı = arz frekansı; ikisi karıştırılmaz.)
+      out[k] = v.n >= 3 && v.d > 0 ? { rs: v.top / v.d, rsComparableDays: v.n } : null;
     });
     return out;
   };
@@ -605,13 +615,16 @@ function getBrutFiyatFirsati(rows) {
     if (!gunUrun[k][r.s]) gunUrun[k][r.s] = { net: 0, d: 0 };
     gunUrun[k][r.s].net += r.net; gunUrun[k][r.s].d += r.d;
   });
-  // Kombo günlük demet tarihçesi (TÜM veri, kronolojik) — gün-bazlı P75 dilimleri için
+  // Kombo günlük demet tarihçesi (kronolojik) — gün-bazlı P75 dilimleri için.
+  // İŞ 3 (Faz 1.3): P75/kapasite yalnız SON 120 GÜN içinden — kapasite güncel operasyonel
+  // gerçektir; 4 yıl önceki tek gün gürültüdür. (Bu fonksiyon yalnız Yönetici Analiz'de kullanılır.)
+  const p75MinTarih = new Date(Date.now() - 120 * 864e5).toISOString().split("T")[0];
   const komboGunlukCache = {};
   const komboGunlukAl = (c, s) => {
     const kk = c + "|" + s;
     if (komboGunlukCache[kk]) return komboGunlukCache[kk];
     const g = {};
-    ALL_DATA.forEach(r => { if (r.c === c && r.s === s) g[r.t] = (g[r.t] || 0) + r.d; });
+    ALL_DATA.forEach(r => { if (r.c === c && r.s === s && r.t >= p75MinTarih) g[r.t] = (g[r.t] || 0) + r.d; });
     komboGunlukCache[kk] = Object.keys(g).sort().map(t => ({ t, d: g[t] }));
     return komboGunlukCache[kk];
   };
@@ -694,12 +707,16 @@ function getNYeterli(pencereGun) {
   return Math.max(3, Math.ceil((pencereGun || 10) / 2));
 }
 
-// İş 3: Veri güveni — 5 etiket, yeni skor DEĞİL, açıklanabilir kural.
-// n<3 → kesin hüküm cümlesi ÜRETİLMEZ ("veri yetersiz").
-function getVeriGuveni(n, rs, arzOran, pencereGun) {
+// Veri güveni — 6 etiket, yeni skor DEĞİL, açıklanabilir kural. YALNIZ rapor dili;
+// Planlayıcı skoruna GİRMEZ. rsN<3 → kesin hüküm cümlesi ÜRETİLMEZ ("veri yetersiz").
+// İŞ 2 (Faz 1.3): rsN = rsComparableDays — RS'e dayalı HER güven/hüküm bu sayıyı kullanır.
+// İŞ 1 (Faz 1.3): "hacimli zayıf sinyal" — 3 ≤ rsN < N_yeterli VE RS ≤ 0,90 VE kombo demeti
+// ürünün dönem toplam demetinin ≥ %15'i (GÖRELİ eşik — keyfi TL/adet değil; %15 açıklanabilir
+// varsayılandır: "ürünün her ~7 demetinden biri bu kanaldan geçiyor" okuması).
+function getVeriGuveni(rsN, rs, arzOran, pencereGun, hacimPayi) {
   const N = getNYeterli(pencereGun);
-  if (n == null || n < 3) return { etiket: "veri yetersiz", renk: [148, 163, 184], css: "#94a3b8" };
-  if (n >= N) {
+  if (rsN == null || rsN < 3) return { etiket: "veri yetersiz", renk: [148, 163, 184], css: "#94a3b8" };
+  if (rsN >= N) {
     if (rs != null && rs >= 1.10) {
       if (arzOran != null && arzOran < 30) return { etiket: "izlenmeli", renk: [100, 116, 139], css: "#94a3b8" }; // düzensiz arz → kanıtlanmış denmez
       return { etiket: "kanıtlanmış sinyal", renk: [22, 120, 74], css: "#34d399" };
@@ -707,9 +724,14 @@ function getVeriGuveni(n, rs, arzOran, pencereGun) {
     if (rs != null && rs <= 0.90) return { etiket: "risk sinyali", renk: [220, 38, 38], css: "#f87171" };
     return { etiket: "izlenmeli", renk: [100, 116, 139], css: "#94a3b8" };
   }
+  if (rs != null && rs <= 0.90 && hacimPayi != null && hacimPayi >= 15) {
+    return { etiket: "hacimli zayıf sinyal", renk: [217, 119, 6], css: "#fbbf24" };
+  }
   if (rs != null && rs >= 1.10) return { etiket: "keşif adayı", renk: [37, 99, 235], css: "#60a5fa" };
   return { etiket: "izlenmeli", renk: [100, 116, 139], css: "#94a3b8" };
 }
+// "Hacimli zayıf sinyal" zorunlu dili (aynen):
+window.HACIMLI_ZAYIF_DIL = "Örneklem kesin hüküm için sınırlı; ancak yüksek hacimde piyasa altı performans nedeniyle yakından izlenmeli.";
 
 // İş 7: Ortalama + medyan birlikte yorum. Eşikler sabit ve açık:
 // geniş taban %5 · uç etki %10 · yatay %3. Koşul yoksa null (satır üretilmez).
@@ -733,18 +755,30 @@ function getKomboBulgulari(kombolar, rsKombo, gunler) {
   const N = getNYeterli(gunler.length);
   const topD = kombolar.reduce((s, k) => s + k.d, 0);
   const genelDbn = topD > 0 ? kombolar.reduce((s, k) => s + k.net, 0) / topD : 0;
+  // İŞ 2: RS'e dayalı güçlü/zayıf/keşif HÜKÜMLERİ rsN (rsComparableDays) ile verilir;
+  // comboDays yalnız arz frekansı bağlamında (getArzDuzenlilik) kullanılır.
+  // İŞ 1: ürün bazlı dönem toplam demeti → hacim payı (%15 göreli eşik hacimli-zayıf için).
+  const urunToplamD = {};
+  kombolar.forEach(k => { urunToplamD[k.c] = (urunToplamD[k.c] || 0) + k.d; });
   const zengin = kombolar.map(k => {
     const rsv = rsKombo[k.c + "|" + k.s];
     const arz = getArzDuzenlilik(k.c, k.s, gunler);
-    return Object.assign({}, k, { rs: rsv ? rsv.rs : null, rsN: rsv ? rsv.n : null, arz: arz ? arz.oran : null });
+    return Object.assign({}, k, {
+      rs: rsv ? rsv.rs : null,
+      rsN: rsv ? rsv.rsComparableDays : null,
+      arz: arz ? arz.oran : null,
+      hacimPayi: urunToplamD[k.c] > 0 ? k.d / urunToplamD[k.c] * 100 : 0
+    });
   });
-  const guclu = zengin.filter(k => k.rs != null && k.rs > 1.05 && k.n >= N && k.d >= topD * 0.03 && k.arz != null && k.arz >= 60 && k.dbn >= genelDbn)
+  const guclu = zengin.filter(k => k.rs != null && k.rs > 1.05 && k.rsN >= N && k.d >= topD * 0.03 && k.arz != null && k.arz >= 60 && k.dbn >= genelDbn)
     .sort((a, b) => b.rs - a.rs).slice(0, 3);
-  const zayif = zengin.filter(k => k.rs != null && k.rs <= 0.90 && k.n >= N && k.d >= topD * 0.03)
+  const zayif = zengin.filter(k => k.rs != null && k.rs <= 0.90 && k.rsN >= N && k.d >= topD * 0.03)
     .sort((a, b) => a.rs - b.rs).slice(0, 3);
-  const kesif = zengin.filter(k => k.rs != null && k.rs >= 1.10 && k.n >= 3 && k.n < N)
+  const hacimliZayif = zengin.filter(k => k.rs != null && k.rs <= 0.90 && k.rsN >= 3 && k.rsN < N && k.hacimPayi >= 15)
+    .sort((a, b) => b.hacimPayi - a.hacimPayi);   // kesme yok — bulgu motoru istisna filtresinden SONRA 2'ye keser
+  const kesif = zengin.filter(k => k.rs != null && k.rs >= 1.10 && k.rsN >= 3 && k.rsN < N)
     .sort((a, b) => b.rs - a.rs).slice(0, 3);
-  return { guclu, zayif, kesif };
+  return { guclu, zayif, hacimliZayif, kesif };
 }
 
 // İş 2: 🧭 Yönetici Bulguları — deterministik, 4-6 madde, "Bulgu → İzleme önerisi" kalıbı.
@@ -767,7 +801,7 @@ function getYoneticiBulgulari(yp) {
     if (!komboM[k]) komboM[k] = { c: r.c, s: r.s, net: 0, d: 0, gunler: new Set() };
     komboM[k].net += r.net; komboM[k].d += r.d; komboM[k].gunler.add(r.t);
   });
-  const kombolar = Object.values(komboM).map(k => Object.assign(k, { n: k.gunler.size, dbn: k.d > 0 ? k.net / k.d : 0 }));
+  const kombolar = Object.values(komboM).map(k => Object.assign(k, { comboDays: k.gunler.size, dbn: k.d > 0 ? k.net / k.d : 0 }));
   const kb = getKomboBulgulari(kombolar, rs.kombo, yp.gun1);
 
   // 1) Ana sürücü (İş 6) — yüzde payı YALNIZ tüm bileşenler aynı işaretliyse
@@ -785,51 +819,61 @@ function getYoneticiBulgulari(yp) {
   // 2) Güçlü şubeler: kanıtlanmış + en yüksek RS + anlamlı hacim payı (en fazla 2)
   const subeAdaylar = vi.map(v => {
     const r = rs.sube[v.sube];
-    return { v, r, g: getVeriGuveni(r ? r.n : null, r ? r.rs : null, null, yp.gun1.length) };
+    return { v, r, g: getVeriGuveni(r ? r.rsComparableDays : null, r ? r.rs : null, null, yp.gun1.length, null) };
   });
   subeAdaylar.filter(x => x.g.etiket === "kanıtlanmış sinyal" && x.v.hacimPay >= 10)
     .sort((a, b) => b.r.rs - a.r.rs).slice(0, 2).forEach(gs => {
       M.push({ etiket: "kanıtlanmış sinyal", css: "#34d399", renk: [22, 120, 74],
-        bulgu: gs.v.sube + " şubesi piyasa üstü: RS " + gs.r.rs.toFixed(2).replace(".", ",") + " (n=" + gs.r.n + "), hacim payı %" + gs.v.hacimPay.toFixed(0),
+        bulgu: gs.v.sube + " şubesi piyasa üstü: RS " + gs.r.rs.toFixed(2).replace(".", ",") + " (n=" + gs.r.rsComparableDays + "), hacim payı %" + gs.v.hacimPay.toFixed(0),
         izleme: "yakından izle" });
     });
 
   // 3) Zayıf şube: risk sinyali
   const zayifSube = subeAdaylar.filter(x => x.g.etiket === "risk sinyali").sort((a, b) => a.r.rs - b.r.rs)[0];
   if (zayifSube) M.push({ etiket: "risk sinyali", css: "#f87171", renk: [220, 38, 38],
-    bulgu: zayifSube.v.sube + " şubesi piyasa altı: RS " + zayifSube.r.rs.toFixed(2).replace(".", ",") + " (n=" + zayifSube.r.n + ")",
+    bulgu: zayifSube.v.sube + " şubesi piyasa altı: RS " + zayifSube.r.rs.toFixed(2).replace(".", ",") + " (n=" + zayifSube.r.rsComparableDays + ")",
     izleme: "Planlayıcı tahsisinde dikkat" });
 
   // 4) Güçlü kombo (İş 5 — dbn+RS+n+demet+arz BİRLİKTE)
   if (kb.guclu.length) {
     const k = kb.guclu[0];
     M.push({ etiket: "kanıtlanmış sinyal", css: "#34d399", renk: [22, 120, 74],
-      bulgu: k.c + " → " + k.s + " güçlü eşleşme: " + fmt(k.dbn) + "/dm, RS " + k.rs.toFixed(2).replace(".", ",") + " (n=" + k.n + "), arz %" + k.arz.toFixed(0),
+      bulgu: k.c + " → " + k.s + " güçlü eşleşme: " + fmt(k.dbn) + "/dm, RS " + k.rs.toFixed(2).replace(".", ",") + " (n=" + k.rsN + "), arz %" + k.arz.toFixed(0),
       izleme: "yakından izle" });
   }
   // 5) Zayıf kombo
   if (kb.zayif.length) {
     const k = kb.zayif[0];
     M.push({ etiket: "risk sinyali", css: "#f87171", renk: [220, 38, 38],
-      bulgu: k.c + " → " + k.s + " zayıf eşleşme: RS " + k.rs.toFixed(2).replace(".", ",") + " (n=" + k.n + ", " + k.d + " dm)",
+      bulgu: k.c + " → " + k.s + " zayıf eşleşme: RS " + k.rs.toFixed(2).replace(".", ",") + " (n=" + k.rsN + ", " + k.d + " dm)",
       izleme: "Planlayıcı tahsisinde dikkat" });
   }
+  // 5b) Hacimli zayıf sinyal (İş 1, Faz 1.3) — öncelik: risk sinyalinden sonra, izlenmeliden
+  // önce; en fazla 2 madde. İSTİSNA KURALI: şubesi zaten risk-sinyali maddesi olarak listede
+  // olan kombolar atlanır — bulgu "tabloyu tekrar eden değil, istisna olan" sinyali taşır.
+  const riskteListelenenSubeler = new Set(M.filter(m => m.etiket === "risk sinyali").map(m => m.bulgu.split(" ")[0]));
+  kb.hacimliZayif.filter(k => !riskteListelenenSubeler.has(k.s)).slice(0, 2).forEach(k => {
+    M.push({ etiket: "hacimli zayıf sinyal", css: "#fbbf24", renk: [217, 119, 6],
+      bulgu: k.c + " → " + k.s + " yüksek hacimde piyasa altı: RS " + k.rs.toFixed(2).replace(".", ",") + " (n=" + k.rsN + ", " + k.d + " dm — ürün payı %" + k.hacimPayi.toFixed(0) + "). " + window.HACIMLI_ZAYIF_DIL,
+      izleme: "yakından izle" });
+  });
+
   // 6) Keşif adayları — önce şube (etiket "keşif adayı"), sonra kombo
   const kesifSube = subeAdaylar.filter(x => x.g.etiket === "keşif adayı")
     .sort((a, b) => b.r.rs - a.r.rs)[0];
   if (kesifSube) M.push({ etiket: "keşif adayı", css: "#60a5fa", renk: [37, 99, 235],
-    bulgu: kesifSube.v.sube + " şubesinde olumlu erken sinyal: RS " + kesifSube.r.rs.toFixed(2).replace(".", ",") + " ama n=" + kesifSube.r.n + " düşük — hüküm için yetersiz",
+    bulgu: kesifSube.v.sube + " şubesinde olumlu erken sinyal: RS " + kesifSube.r.rs.toFixed(2).replace(".", ",") + " ama n=" + kesifSube.r.rsComparableDays + " düşük — hüküm için yetersiz",
     izleme: "kontrollü hacim testi değerlendir" });
   if (kb.kesif.length) {
     const k = kb.kesif[0];
     M.push({ etiket: "keşif adayı", css: "#60a5fa", renk: [37, 99, 235],
-      bulgu: k.c + " → " + k.s + " olumlu erken sinyal: RS " + k.rs.toFixed(2).replace(".", ",") + " ama n=" + k.n + " düşük",
+      bulgu: k.c + " → " + k.s + " olumlu erken sinyal: RS " + k.rs.toFixed(2).replace(".", ",") + " ama n=" + k.rsN + " düşük",
       izleme: "kontrollü hacim testi değerlendir" });
   }
   // 7) VI/RS rol ayrımı (İş 4): VI<0,95 ama RS 0,95–1,05 → şube "kötü" İLAN EDİLMEZ
-  const viRsAyrim = subeAdaylar.find(x => x.v.vi !== null && x.v.vi < 0.95 && x.r && x.r.rs >= 0.95 && x.r.rs <= 1.05 && x.r.n >= N);
+  const viRsAyrim = subeAdaylar.find(x => x.v.vi !== null && x.v.vi < 0.95 && x.r && x.r.rs >= 0.95 && x.r.rs <= 1.05 && x.r.rsComparableDays >= N);
   if (viRsAyrim) M.push({ etiket: "izlenmeli", css: "#94a3b8", renk: [100, 116, 139],
-    bulgu: viRsAyrim.v.sube + ": gelir payı hacim payının altında (VI " + viRsAyrim.v.vi.toFixed(2).replace(".", ",") + ") — ürün karması etkisi; fiyat performansı piyasayla uyumlu (RS " + viRsAyrim.r.rs.toFixed(2).replace(".", ",") + ", n=" + viRsAyrim.r.n + ")",
+    bulgu: viRsAyrim.v.sube + ": gelir payı hacim payının altında (VI " + viRsAyrim.v.vi.toFixed(2).replace(".", ",") + ") — ürün karması etkisi; fiyat performansı piyasayla uyumlu (RS " + viRsAyrim.r.rs.toFixed(2).replace(".", ",") + ", n=" + viRsAyrim.r.rsComparableDays + ")",
     izleme: "ürün karmasını yakından izle" });
 
   // 8) Ortalama-medyan uyumu (İş 7)
