@@ -894,10 +894,15 @@ function getYoneticiBulgulari(yp) {
   };
 }
 
-// ═══════════════ REJİM MOTORU (Rapor Faz 2.1) ═══════════════
+// ═══════════════ REJİM MOTORU (Rapor Faz 2.1 · dil revizyonu Faz 2.2) ═══════════════
 // YALNIZ rapor katmanıdır — Planlayıcı karar motoruna BAĞLANMAZ (patron talimatı).
 // getMezatSerisi'nin mevcut alanlarına dokunulmaz; rejim ayrı türetilir.
-// Momentum eşiği ±%5 (gerçek ROC3 dağılımıyla doğrulandı — rapor dokümantasyonunda).
+// NÖTR BANT (teknik belge — Faz 2.2 İş 1): momentum sınıfı ROC3 ∈ [−%5, +%5] aralığında
+//   "yatay" (nötr) sayılır; ROC3 > +%5 → "+", ROC3 < −%5 → "−". Eşik ±%5 gerçek ROC3
+//   dağılımıyla doğrulandı (q25 −%46,8 · medyan −%11,8 · q75 +%1,4 — Faz 2.1 raporu).
+// GENEL KURAL (Faz 2.2): eğim yönlü + momentum nötr → "Yükseliş/Düşüş sürüyor — ivme nötr"
+//   ("İstikrarlı yükseliş/düşüş" dili kaldırıldı). Kural tablodan uygulanır — ürün/şube
+//   hard-code YASAK; başka hiçbir rejim etiketi değişmedi.
 // CV risk katmanı YÖN DEĞİL: <%15 düşük · %15-25 orta · >%25 yüksek oynaklık.
 function getRejim(ms) {
   if (!ms || ms.n === 0) return { rejim: null, riskKatmani: null, ok: "→", momentumSinifi: null, egimSinifi: null, kirilmaAilesi: false };
@@ -911,8 +916,8 @@ function getRejim(ms) {
     else if (egim === "yatay" && mom === "-") { rejim = "Aşağı kırılma riski"; ok = "→"; }
     else if (egim === "-" && mom === "+") { rejim = "Toparlanma adayı / düşüş zayıflıyor"; ok = "↓"; }
     else if (egim === "-" && mom === "-") { rejim = "Güçlenen düşüş"; ok = "↓"; }
-    else if (egim === "+" && mom === "yatay") { rejim = "İstikrarlı yükseliş"; ok = "↑"; }
-    else if (egim === "-" && mom === "yatay") { rejim = "İstikrarlı düşüş"; ok = "↓"; }
+    else if (egim === "+" && mom === "yatay") { rejim = "Yükseliş sürüyor — ivme nötr"; ok = "↑"; }
+    else if (egim === "-" && mom === "yatay") { rejim = "Düşüş sürüyor — ivme nötr"; ok = "↓"; }
     else { rejim = "Yatay / dengeli"; ok = "→"; }
   }
   const risk = ms.cv === null ? null : (ms.cv < 15 ? "düşük oynaklık" : ms.cv <= 25 ? "orta oynaklık" : "yüksek oynaklık");

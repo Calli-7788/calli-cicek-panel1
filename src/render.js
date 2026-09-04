@@ -2722,6 +2722,20 @@ function render() {
       if (tev.gunler.length === 0) {
         html += `<div style="font-size:12px;color:#fbbf24;text-align:center;padding:16px">Bu filtreyle mezat verisi yok.</div>`;
       } else {
+        // ⓪ 🧭 Trend Yönetici Bulguları — iki satır hiyerarşisi (Faz 2.2 İş 3):
+        // ana cümle normal boy, teknik kanıt ikinci satırda küçük gri (PDF ile aynı düzen)
+        const tBulgular = getTrendBulgulari(tev);
+        if (tBulgular.length) {
+          html += `<div style="margin-bottom:10px">`;
+          html += `<div style="font-size:10px;font-weight:700;color:#94a3b8;margin-bottom:4px">🧭 Trend Yönetici Bulguları</div>`;
+          tBulgular.forEach(b => {
+            html += `<div style="padding:4px 0;border-top:1px solid rgba(255,255,255,0.03)">`;
+            html += `<div style="font-size:10.5px;color:#e2e8f0;line-height:1.4">• ${esc(b.ana)}</div>`;
+            html += `<div style="font-size:8.5px;color:#64748b;padding-left:11px;margin-top:1px">${esc(b.teknik)}</div>`;
+            html += `</div>`;
+          });
+          html += `</div>`;
+        }
         // ① Piyasa özet şeridi — rejim dili büyük, teknik küçük
         const tEvrenMs = trendEvrenSeri(null, 30);
         const tEvrenRj = getRejim(tEvrenMs);

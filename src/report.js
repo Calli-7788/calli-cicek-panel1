@@ -652,20 +652,34 @@ function trendMaskeliSeri(rows, cicekAdi, sube, sonN) {
 }
 
 // Birleşik "evren" serisi (filtre dahilinde, 120 gün içi)
-function trendEvrenSeri(sube, sonN) {
+// sadeceV2 (Faz 2.2 İş 2): true → yalnız V2 dönemi (t >= V2_CUTOFF) alt serisi — güven
+// katmanı kıyası için; mevcut çağrılar parametresiz kalır, davranışları DEĞİŞMEZ.
+function trendEvrenSeri(sube, sonN, sadeceV2) {
   const filtre = r =>
     (!state.sf || (state.sf.startsWith("GRUP:") ? r.c.startsWith(state.sf.replace("GRUP:", "")) : r.c === state.sf)) &&
     (!state.sb || r.s === state.sb);
   const minTarih = getGuncellikSiniri();
-  const maskeli = ALL_DATA.filter(r => r.t >= minTarih && filtre(r)).map(r => ({ t: r.t, c: "__EVREN__", s: r.s, d: r.d, net: r.net, costModel: r.costModel }));
+  const maskeli = ALL_DATA.filter(r => r.t >= minTarih && (!sadeceV2 || r.t >= V2_CUTOFF) && filtre(r)).map(r => ({ t: r.t, c: "__EVREN__", s: r.s, d: r.d, net: r.net, costModel: r.costModel }));
   return trendMaskeliSeri(maskeli, "__EVREN__", sube, sonN);
 }
 
 // Ürün serisi (120 gün sınırlı — ekran grafiği bundan ETKİLENMEZ, kendi yolunu kullanır)
-function trendUrunSeri(cicek, sube, sonN) {
+function trendUrunSeri(cicek, sube, sonN, sadeceV2) {
   const minTarih = getGuncellikSiniri();
-  const kirpik = ALL_DATA.filter(r => r.t >= minTarih);
+  const kirpik = ALL_DATA.filter(r => r.t >= minTarih && (!sadeceV2 || r.t >= V2_CUTOFF));
   return trendMaskeliSeri(kirpik, cicek, sube, sonN);
+}
+
+// ── Faz 2.2 İş 2: V1/V2 hassasiyet kontrolü — YALNIZ güven katmanı ──
+// Ana rejim her zaman A (karma) seriden gelir; B (yalnız V2) yalnızca kıyas içindir.
+// Kıyas ana rejim sınıfı üzerinden yapılır (oynaklık katmanı kıyasa girmez).
+// B'de n<6 → "yetersiz" (hüküm yok). A=B → "aynı" (rapor dipnotu), A≠B → "farklı" (blok ⚠).
+function trendV2Kiyas(aMs, bMs) {
+  const aRj = getRejim(aMs);
+  if (!aRj.rejim || !bMs || bMs.n < 6) return { durum: "yetersiz", bRejim: null, bN: bMs ? bMs.n : 0 };
+  const bRj = getRejim(bMs);
+  if (!bRj.rejim) return { durum: "yetersiz", bRejim: null, bN: bMs.n };
+  return { durum: aRj.rejim === bRj.rejim ? "aynı" : "farklı", bRejim: bRj.rejim, bN: bMs.n };
 }
 
 // Trend rapor evreni: 120 gün içi filtreli son 30 mezat günü + ürün demet dağılımı
@@ -714,13 +728,15 @@ function trendNedenEki(rj, ms) {
   return "";
 }
 
-// Bulgu cümlesi şablonu: "[Ad]: [rejim] — [oynaklık]. (eğim … · momentum … · CV … · hacim …)"
+// Bulgu maddesi — İKİ SATIR HİYERARŞİSİ (Faz 2.2 İş 3):
+// ana (normal boy): "Ad: rejim — oynaklık (neden eki)"
+// teknik (küçük gri, ikinci satır): "−2,8 ₺/mezat · momentum −%56 · CV %27 · 1311 dm"
 function trendBulguCumlesi(ad, ms, rj, hacimD) {
-  const teknik = "eğim " + (ms.slope === null ? "—" : (ms.slope >= 0 ? "+" : "") + ms.slope.toFixed(1) + " ₺/mezat") +
+  const teknik = (ms.slope === null ? "eğim —" : (ms.slope >= 0 ? "+" : "−") + Math.abs(ms.slope).toFixed(1).replace(".", ",") + " ₺/mezat") +
     " · momentum " + (ms.roc3 === null ? "—" : (ms.roc3 >= 0 ? "+" : "−") + "%" + Math.abs(ms.roc3).toFixed(0)) +
     " · CV " + (ms.cv === null ? "—" : "%" + ms.cv.toFixed(0)) +
-    (hacimD != null ? " · hacim " + hacimD + " dm" : "");
-  return ad + ": " + rejimEtiket(rj) + trendNedenEki(rj, ms) + ". (" + teknik + ")";
+    (hacimD != null ? " · " + hacimD + " dm" : "");
+  return { ad, ana: ad + ": " + rejimEtiket(rj) + trendNedenEki(rj, ms), teknik };
 }
 
 // 🧭 Trend Yönetici Bulguları — 4-6 deterministik cümle (ürün adı hard-code YASAK)
@@ -741,7 +757,7 @@ function getTrendBulgulari(ev) {
   });
 
   // En sert momentum (n≥6, |ROC3| max; yukarıda geçtiyse atla)
-  const gecenler = new Set(M.map(m => m.split(":")[0]));
+  const gecenler = new Set(M.map(m => m.ad));
   const sert = ev.siralı.map(u => {
     const ms = trendUrunSeri(u.c, state.sb || null, 30);
     return ms.n >= 6 && ms.roc3 !== null ? { c: u.c, ms, rj: getRejim(ms), d: u.d } : null;
@@ -843,17 +859,45 @@ async function generateTrendPDF() {
     };
     const rejimRenk = rj => rj.ok === "↑" ? [22, 120, 74] : rj.ok === "↓" ? [220, 38, 38] : [100, 116, 139];
 
-    // ── 1) 🧭 Trend Yönetici Bulguları (EN ÜSTTE) ──
+    // ── Faz 2.2 İş 2: V1/V2 hassasiyet sayacı + blok notu yardımcıları ──
+    // (ana rejim DAİMA karma seriden; buradaki her şey güven katmanı)
+    const v2Sayac = { ayni: 0, farkli: 0, yetersiz: 0, detay: [] };
+    const v2Say = (ad, k) => {
+      v2Sayac[k.durum === "aynı" ? "ayni" : k.durum === "farklı" ? "farkli" : "yetersiz"]++;
+      v2Sayac.detay.push({ ad, durum: k.durum, bRejim: k.bRejim, bN: k.bN });
+      return k;
+    };
+    const v2Notu = (k) => {
+      doc.setFont("DejaVu", "normal"); doc.setFontSize(6.5);
+      if (k.durum === "farklı") {
+        doc.setTextColor(220, 38, 38);
+        doc.text(pdfMetin("⚠ V1/V2 ayrımında rejim değişiyor — güven düşük (V2-yalnız: " + k.bRejim + ", n=" + k.bN + ")"), 40, y + 3);
+        y += 10;
+      } else if (k.durum === "yetersiz") {
+        doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
+        doc.text(pdfMetin("V2 karşılaştırması için yetersiz veri (n=" + k.bN + ")"), 40, y + 3);
+        y += 9;
+      }
+      doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+    };
+
+    // ── 1) 🧭 Trend Yönetici Bulguları (EN ÜSTTE — iki satır hiyerarşisi, Faz 2.2 İş 3) ──
     const bulgular = getTrendBulgulari(ev);
     if (bulgular.length) {
       doc.setFont("DejaVu", "bold"); doc.setFontSize(12);
       doc.text(pdfMetin("🧭 Trend Yönetici Bulguları"), 40, y); y += 10;
-      doc.setFont("DejaVu", "normal"); doc.setFontSize(8);
-      bulgular.forEach(c => {
-        const lines = doc.splitTextToSize(pdfMetin("• " + c), W - 88);
-        if (y + lines.length * 10 > H - 50) { doc.addPage(); y = 80; }
-        doc.text(lines, 44, y + 4);
-        y += lines.length * 10 + 2;
+      bulgular.forEach(b => {
+        doc.setFont("DejaVu", "normal"); doc.setFontSize(8);
+        const anaLines = doc.splitTextToSize(pdfMetin("• " + b.ana), W - 88);
+        const tekLines = doc.splitTextToSize(pdfMetin(b.teknik), W - 100);
+        if (y + anaLines.length * 10 + tekLines.length * 8 > H - 50) { doc.addPage(); y = 80; }
+        doc.text(anaLines, 44, y + 4);
+        y += anaLines.length * 10;
+        doc.setFontSize(6.5);
+        doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
+        doc.text(tekLines, 52, y + 2);
+        doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+        y += tekLines.length * 8 + 4;
       });
       y += 6;
     }
@@ -861,11 +905,13 @@ async function generateTrendPDF() {
     // ── 2) Piyasa Özeti — rejim dili büyük, teknik küçük, grafik aynen ──
     const evrenMs = trendEvrenSeri(null, 30);
     const evrenRj = getRejim(evrenMs);
+    const evrenV2 = v2Say("Piyasa geneli", trendV2Kiyas(evrenMs, trendEvrenSeri(null, 30, true)));
     doc.setFont("DejaVu", "bold"); doc.setFontSize(12);
     doc.setTextColor.apply(doc, rejimRenk(evrenRj));
-    doc.text(pdfMetin(evrenRj.ok + " Piyasa: " + rejimEtiket(evrenRj)), 40, y);
+    doc.text(pdfMetin((evrenV2.durum === "farklı" ? "⚠ " : "") + evrenRj.ok + " Piyasa: " + rejimEtiket(evrenRj)), 40, y);
     doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
     y += 8;
+    v2Notu(evrenV2);
     kucukTeknik(evrenMs);
     await grafikEkle(evrenMs);
 
@@ -876,16 +922,18 @@ async function generateTrendPDF() {
     for (const c of ev.liderler) {
       const ms = trendUrunSeri(c, state.sb || null, 30);
       const rj = getRejim(ms);
+      const v2k = v2Say(c, trendV2Kiyas(ms, trendUrunSeri(c, state.sb || null, 30, true)));
       if (y + 30 > H - 50) { doc.addPage(); y = 80; }
       doc.setFont("DejaVu", "bold"); doc.setFontSize(10);
       doc.setTextColor.apply(doc, rejimRenk(rj));
-      doc.text(pdfMetin(rj.ok + " " + c + " — " + rejimEtiket(rj)), 40, y + 4);
+      doc.text(pdfMetin((v2k.durum === "farklı" ? "⚠ " : "") + rj.ok + " " + c + " — " + rejimEtiket(rj)), 40, y + 4);
       doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
       doc.setFont("DejaVu", "normal"); doc.setFontSize(6.5);
       doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
       doc.text(pdfMetin((ev.siralı.find(u => u.c === c) || {}).d + " dm"), W - 40, y + 4, { align: "right" });
       doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
       y += 10;
+      v2Notu(v2k);
       kucukTeknik(ms);
       if (ms.n < 5) {
         doc.setFontSize(7.5); doc.setTextColor(202, 138, 4);
@@ -944,13 +992,28 @@ async function generateTrendPDF() {
     const ana3 = anaSirali.slice(0, 3).map(([s]) => s);
     const subeMsCache = {};
     const subeMs = s => subeMsCache[s] || (subeMsCache[s] = trendEvrenSeri(s, 30));
+    const subeV2k = {};
+    ana3.forEach(s => { subeV2k[s] = v2Say(s + " şubesi", trendV2Kiyas(subeMs(s), trendEvrenSeri(s, 30, true))); });
     y = pdfTablo(doc, ["Şube", "Rejim", "Net", "Demet", "Pay", "Eğim", "ROC3", "CV"],
       ana3.map(s => {
         const ms = subeMs(s), rj = getRejim(ms);
-        return [rj.ok + " " + s, rejimEtiket(rj), fmt(subeAgg[s].net), String(subeAgg[s].d), toplamNet2 > 0 ? "%" + (subeAgg[s].net / toplamNet2 * 100).toFixed(0) : "—",
+        return [(subeV2k[s].durum === "farklı" ? "⚠ " : "") + rj.ok + " " + s, rejimEtiket(rj), fmt(subeAgg[s].net), String(subeAgg[s].d), toplamNet2 > 0 ? "%" + (subeAgg[s].net / toplamNet2 * 100).toFixed(0) : "—",
           ms.slope === null ? "—" : (ms.slope >= 0 ? "+" : "") + ms.slope.toFixed(1), ms.roc3 === null ? "—" : (ms.roc3 >= 0 ? "+" : "−") + "%" + Math.abs(ms.roc3).toFixed(0), ms.cv === null ? "—" : "%" + ms.cv.toFixed(0)];
       }),
       { startY: y + 6, kucuk: true, fontSize: 6.5, columnStyles: { 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right" }, 7: { halign: "right" } } }) + 8;
+    // Şube V2 kıyas notları (farklı → ibare, yetersiz → tek toplu satır)
+    ana3.filter(s => subeV2k[s].durum === "farklı").forEach(s => {
+      doc.setFont("DejaVu", "normal"); doc.setFontSize(6.5); doc.setTextColor(220, 38, 38);
+      doc.text(pdfMetin("⚠ " + s + ": V1/V2 ayrımında rejim değişiyor — güven düşük (V2-yalnız: " + subeV2k[s].bRejim + ", n=" + subeV2k[s].bN + ")"), 40, y); y += 9;
+      doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+    });
+    const subeYetersiz = ana3.filter(s => subeV2k[s].durum === "yetersiz");
+    if (subeYetersiz.length) {
+      doc.setFont("DejaVu", "normal"); doc.setFontSize(6.5);
+      doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
+      doc.text(pdfMetin("V2 karşılaştırması için yetersiz veri: " + subeYetersiz.join(", ")), 40, y); y += 9;
+      doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+    }
     // Trend İstisnaları
     const ana3Set = new Set(ana3);
     const istisnalar = anaSirali.map(([s]) => s).filter(s => !ana3Set.has(s)).map(s => {
@@ -986,10 +1049,42 @@ async function generateTrendPDF() {
       y += scH + 8;
       doc.setFont("DejaVu", "normal"); doc.setFontSize(7);
       doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
-      doc.text(doc.splitTextToSize(pdfMetin("Okuma: sağ üst = pahalı ve oynak (fırsat/risk), sol üst = pahalı ve istikrarlı (çekirdek gelir). Nokta büyüklüğü = demet hacmi; ↑↓→ = rejim yönü. n≥6 ürünler."), W - 80), 40, y);
+      const okumaSatir = doc.splitTextToSize(pdfMetin("Okuma: sağ üst = pahalı ve oynak (fırsat/risk), sol üst = pahalı ve istikrarlı (çekirdek gelir). Nokta büyüklüğü = demet hacmi; ↑↓→ = rejim yönü. n≥6 ürünler."), W - 80);
+      doc.text(okumaSatir, 40, y);
       doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+      y += okumaSatir.length * 8 + 10;
     }
 
+    // ── 7) Yöntem Doğrulama Özeti (Faz 2.1 testleri — patron paketi, Faz 2.2 İş 4) ──
+    if (y > H - 120) { doc.addPage(); y = 80; }
+    doc.setFont("DejaVu", "bold"); doc.setFontSize(10);
+    doc.text(pdfMetin("Yöntem Doğrulama Özeti (Faz 2.1 testleri)"), 40, y); y += 4;
+    doc.setFont("DejaVu", "normal"); doc.setFontSize(7);
+    [
+      "ROC3 pencere testi — nokta bazlı vs 3'lü ortalama (3v3): 3v3 belirgin daha kararlı; tekil aykırı mezata yaklaşık 3 kat daha dirençli.",
+      "3v3'e geçilseydi incelenen 11 serinin 4'ünde rejim sınıfı yumuşardı (sert momentum sinyalleri nötrleşirdi) — yanlış alarm riski azalırdı.",
+      "Eğim testi — OLS vs Theil-Sen: 11 serinin 9'unda işaret uyumu; ayrışan serilerde fark tekil aykırı değer kaynaklı (bir seride OLS +26,3 iken Theil-Sen −0,3).",
+      "Bu turda yöntem DEĞİŞTİRİLMEDİ: motor nokta bazlı ROC3 ve OLS eğimle çalışmaya devam ediyor — geçiş kararı patrondadır.",
+      "Değerlendirme: 3v3 sonuçları geçiş için güçlü gerekçe sunuyor (aykırı değer direnci + daha istikrarlı rejim sınıfı)."
+    ].forEach(s => {
+      const L = doc.splitTextToSize(pdfMetin("• " + s), W - 88);
+      if (y + L.length * 9 > H - 50) { doc.addPage(); y = 80; }
+      doc.text(L, 44, y + 6);
+      y += L.length * 9 + 1;
+    });
+    y += 8;
+
+    // ── Veri kalitesi hassasiyeti dipnotu (Faz 2.2 İş 2) ──
+    if (y > H - 60) { doc.addPage(); y = 80; }
+    doc.setFont("DejaVu", "normal"); doc.setFontSize(6.5);
+    doc.setTextColor(PDF_TEMA.gri[0], PDF_TEMA.gri[1], PDF_TEMA.gri[2]);
+    const v2DipEk = v2Sayac.yetersiz > 0 ? "; " + v2Sayac.yetersiz + " seride V2 karşılaştırması için yetersiz veri" : "";
+    doc.text(pdfMetin(v2Sayac.farkli === 0
+      ? "Veri kalitesi hassasiyeti: rejimler V2-yalnız seriyle aynı (" + v2Sayac.ayni + " seri" + v2DipEk + ")."
+      : "Veri kalitesi hassasiyeti: " + v2Sayac.farkli + " seride V1/V2 ayrımında rejim değişiyor (⚠ işaretli bloklar); " + v2Sayac.ayni + " seri aynı" + v2DipEk + "."), 40, y);
+    doc.setTextColor(PDF_TEMA.koyu[0], PDF_TEMA.koyu[1], PDF_TEMA.koyu[2]);
+
+    window.__trendV2Kiyas = v2Sayac;
     window.__trendPdfSure = Date.now() - t0;
     pdfOnizlemeAc(doc, pdfDosyaAdi("trend"));
   } catch (e) {
